@@ -1,0 +1,12 @@
+dist/*
+node_modules/*
+.idea/
+*.log
+*.tgz
+.claude/
+docs/temp/
+.sync-manifests/
+scripts/post-commit-sync.ps1
+scripts/post-commit-sync.sh
+web/dist/
+web/node_modules/
