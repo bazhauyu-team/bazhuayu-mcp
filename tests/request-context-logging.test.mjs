@@ -1,8 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { EventEmitter } from 'node:events';
 
 import { RequestContextManager } from '../dist/utils/request-context.js';
 import { Logger } from '../dist/utils/logger.js';
+import { requestLogger } from '../dist/middleware/request-logger.js';
 
 test('updateContext preserves request and correlation ids while enriching request fields', () => {
   const startTime = Date.now();
@@ -119,4 +121,99 @@ test('buildStructuredLog preserves structured exception objects produced from re
     message: 'upstream timeout',
     stack: 'stack-trace'
   });
+});
+
+test('requestLogger includes toolInput and toolOutput from request context in HTTP logs', () => {
+  const originalInfo = Logger.info;
+  const infoCalls = [];
+  Logger.info = (message, options) => {
+    infoCalls.push({ message, options });
+  };
+
+  const req = {
+    method: 'POST',
+    path: '/',
+    originalUrl: '/mcp',
+    url: '/mcp',
+    hostname: 'localhost',
+    body: {
+      method: 'tools/call',
+      params: {
+        name: 'export_data'
+      }
+    },
+    socket: {
+      remoteAddress: '127.0.0.1'
+    },
+    get: (name) => {
+      const headers = {
+        host: 'localhost',
+        'user-agent': 'test-agent'
+      };
+      return headers[String(name).toLowerCase()];
+    }
+  };
+
+  class FakeResponse extends EventEmitter {
+    constructor() {
+      super();
+      this.statusCode = 200;
+      this.headers = {};
+    }
+
+    get(name) {
+      return this.headers[String(name).toLowerCase()];
+    }
+
+    json(body) {
+      this.body = body;
+      return this;
+    }
+
+    send(body) {
+      this.body = body;
+      return this;
+    }
+
+    end() {
+      return this;
+    }
+  }
+
+  const res = new FakeResponse();
+
+  try {
+    requestLogger(req, res, () => {
+      RequestContextManager.updateContext({
+        toolInput: {
+          taskId: 'task-http-1'
+        },
+        toolOutput: {
+          taskId: 'task-http-1',
+          status: 'exported',
+          lot: 'lot-http-1'
+        }
+      });
+
+      res.json({
+        jsonrpc: '2.0',
+        result: {
+          content: [{ type: 'text', text: '{"success":true}' }]
+        },
+        id: 1
+      });
+    });
+
+    const httpLog = infoCalls.find((entry) => entry.options?.loggerName === 'bazhuayu.mcp.http');
+    assert.deepEqual(httpLog?.options?.meta?.toolInput, {
+      taskId: 'task-http-1'
+    });
+    assert.deepEqual(httpLog?.options?.meta?.toolOutput, {
+      taskId: 'task-http-1',
+      status: 'exported',
+      lot: 'lot-http-1'
+    });
+  } finally {
+    Logger.info = originalInfo;
+  }
 });

@@ -60,6 +60,28 @@ test('start_or_stop_task returns the NoPermission guidance to the user', async (
   assert.equal(result.requiresUserAction, true);
 });
 
+test('start_or_stop_task includes lot from startTask response when start is accepted', async () => {
+  const api = {
+    getTaskStatus: async () => [{ taskId: 'task-lot', status: 'Stopped' }],
+    startTask: async () => ({
+      result: StartTaskResult.SUCCESS,
+      lotNo: 'lot-start-1'
+    })
+  };
+
+  const result = await startOrStopTaskTool.handler(
+    {
+      taskId: 'task-lot',
+      action: 'start'
+    },
+    api
+  );
+
+  assert.equal(result.success, true);
+  assert.equal(result.status, 'start_requested');
+  assert.equal(result.lot, 'lot-start-1');
+});
+
 test('start_or_stop_task resolves thrown start error code case-insensitively before falling back to message', async () => {
   const api = {
     getTaskStatus: async () => [{ taskId: 'task-throw', status: 'Stopped' }],

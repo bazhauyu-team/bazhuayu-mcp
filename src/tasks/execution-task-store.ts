@@ -34,7 +34,7 @@ export interface InMemoryExecutionTaskStoreOptions {
   now?: () => number;
 }
 
-const DEFAULT_POLL_INTERVAL_MS = 1000;
+const DEFAULT_POLL_INTERVAL_MS = 3000;
 const DEFAULT_PAGE_SIZE = 50;
 
 function createDefaultTaskId(): string {

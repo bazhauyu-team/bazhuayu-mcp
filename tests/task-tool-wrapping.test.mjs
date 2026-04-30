@@ -10,6 +10,7 @@ process.env.LOG_ENABLE_FILE = 'false';
 
 const { registerToolTask } = await import('../dist/tools/tool-registry.js');
 const { SecureErrorHandler } = await import('../dist/security/secure-error-handler.js');
+const { RequestContextManager } = await import('../dist/utils/request-context.js');
 
 function createFakeServer() {
   const logs = [];
@@ -73,7 +74,7 @@ test('registerToolTask enforces auth for createTask before invoking the task han
   );
 
   assert.equal(createTaskCalls, 0);
-  assert.equal(fakeServer.logs.some((entry) => String(entry.data).includes('rejected by authentication guard')), true);
+  assert.equal(fakeServer.logs.some((entry) => entry.logger === 'bazhuayu.mcp.tool'), false);
 });
 
 test('registerToolTask wraps getTaskResult errors into MCP tool errors and emits failure logs', async () => {
@@ -120,7 +121,7 @@ test('registerToolTask wraps getTaskResult errors into MCP tool errors and emits
 
     assert.equal(result.isError, true);
     assert.equal(String(result.content[0].text).includes('UNKNOWN_ERROR'), true);
-    assert.equal(fakeServer.logs.some((entry) => String(entry.data).includes('Tool failed')), true);
+    assert.equal(fakeServer.logs.some((entry) => entry.logger === 'bazhuayu.mcp.tool'), false);
   } finally {
     SecureErrorHandler.logError = originalLogError;
   }
@@ -155,12 +156,22 @@ test('registerToolTask wraps getTask success with task-operation logging', async
   );
 
   const registered = fakeServer.getRegistered();
-  const result = await registered.handler.getTask(
-    {},
-    { taskId: 't1', taskStore: {}, requestId: 'req-1', sendNotification: async () => {}, sendRequest: async () => ({}), sessionId: undefined, signal: AbortSignal.timeout(1000) }
+  let context;
+  const result = await RequestContextManager.runWithContext(
+    {
+      requestId: 'req-task-wrapper',
+      correlationId: 'corr-task-wrapper',
+      startTime: Date.now()
+    },
+    () => registered.handler.getTask(
+      {},
+      { taskId: 't1', taskStore: {}, requestId: 'req-1', sendNotification: async () => {}, sendRequest: async () => ({}), sessionId: undefined, signal: AbortSignal.timeout(1000) }
+    ).finally(() => {
+      context = RequestContextManager.getContext();
+    })
   );
 
   assert.equal(result.task.status, 'completed');
-  assert.equal(fakeServer.logs.some((entry) => String(entry.data).includes('Starting tool: status_task_tool')), true);
-  assert.equal(fakeServer.logs.some((entry) => String(entry.data).includes('Tool succeeded: status_task_tool')), true);
+  assert.equal(fakeServer.logs.some((entry) => entry.logger === 'bazhuayu.mcp.tool'), false);
+  assert.equal(context?.toolInput, undefined);
 });

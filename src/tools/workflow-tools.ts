@@ -725,7 +725,7 @@ const defaultExecutionTaskAuthStore = createExecutionTaskAuthStore({
 const defaultExecutionTaskWorker = new ExecutionTaskWorker({
   authStore: defaultExecutionTaskAuthStore,
   pollIntervalMs: defaultTaskConfig.pollIntervalMs,
-  pollIntervalWithTargetMaxRowsMs: Math.max(100, Math.min(defaultTaskConfig.pollIntervalMs, 1500)),
+  pollIntervalWithTargetMaxRowsMs: Math.max(100, Math.min(1500, 3000)),
   lockTtlMs: defaultTaskConfig.lockTtlMs
 });
 const defaultExecutionTaskService = new ExecutionTaskService({
@@ -1078,6 +1078,7 @@ async function executeTaskHandler(
         status: 'failed' as const,
         recoverable: false,
         milestones,
+        ...(startResult.lotNo ? { lotNo: startResult.lotNo } : {}),
         message: startResult.message || getStartTaskResultDescription(startResult.result),
         startResultCode: startResult.errorCode ?? EnumLabelUtil.startTaskResult(startResult.result),
         upstreamMessage: startResult.message,
@@ -1122,6 +1123,7 @@ async function executeTaskHandler(
     templateName: preparedExecution.templateName,
     status: 'accepted' as const,
     milestones,
+    ...(startResult.lotNo ? { lotNo: startResult.lotNo } : {}),
     message:
       `Cloud task started. This request is using the direct compatibility fallback instead of the recommended MCP Tasks mode, so wait about ${NON_TASK_EXPORT_POLL_MIN_SECONDS}-${NON_TASK_EXPORT_POLL_MAX_SECONDS} seconds before calling export_data(taskId) to monitor collection and export progress.`,
     retryGuidance: {
