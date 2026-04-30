@@ -1,7 +1,5 @@
 # bazhuayu MCP Server
 
-> [🇺🇸 English](README.en.md) | 🇨🇳 中文
-
 这是一个面向 AI 工作流重新收敛后的 bazhuayu MCP Server。
 
 当前 server 只保留 3 个核心 tools：

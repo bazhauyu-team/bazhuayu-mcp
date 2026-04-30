@@ -1,7 +1,5 @@
 # 八爪鱼 MCP 是什么？
 
-> English: [Overview.en.md](Overview.en.md)
-
 八爪鱼 MCP 可以让 ChatGPT、Claude、Cursor、VS Code GitHub Copilot、Codex CLI、Gemini CLI 等 AI 工具直接调用八爪鱼的采集能力。你可以用自然语言告诉 AI 要采集什么，AI 再通过 MCP 去搜索模板、创建云采集任务，并把导出的结构化数据返回给你。
 
 它不是用来替代八爪鱼客户端、网页端或 OpenAPI 的。更准确地说，MCP 是给 AI 准备的一层入口：过去你需要自己打开八爪鱼、找模板、配参数、跑任务、导数据；现在这些步骤可以交给支持 MCP 的 AI 客户端来串起来。
@@ -101,4 +99,4 @@ AI 可以通过 MCP 完成后面的动作：找模板、确认参数、创建任
 - 希望让 AI Agent 自动补充实时网页数据的团队。
 - 正在搭建内部 AI 助手、自动化流程或数据工具的开发者。
 
-如果你想先跑通一次完整流程，可以阅读 [QuickStart](quickstart.md)，从搜索模板开始，完成一次任务创建和数据导出。
+如果你想先跑通一次完整流程，可以阅读 [QuickStart](QuickStart.md)，从搜索模板开始，完成一次任务创建和数据导出。

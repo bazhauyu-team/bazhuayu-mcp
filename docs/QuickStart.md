@@ -1,7 +1,5 @@
 # QuickStart：连接八爪鱼 MCP Server
 
-> English: [quickstart.en.md](quickstart.en.md)
-
 这份文档面向 MCP 客户端集成方，帮助你把八爪鱼 MCP Server 接入 ChatGPT、Claude、OpenClaw、Cursor、VS Code GitHub Copilot、Gemini CLI、Claude Code 或 Codex CLI，并跑通一次模板搜索、任务创建和数据导出流程。
 
 如果你还不了解 MCP 或八爪鱼 MCP 的定位，可以先阅读 [Overview](Overview.md)。
