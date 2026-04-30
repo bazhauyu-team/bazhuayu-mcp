@@ -196,6 +196,7 @@ export const startOrStopTaskTool: ToolDefinition = {
           action: input.action,
           status: 'start_requested' as const,
           ...(currentStatus ? { previousStatus: currentStatus } : {}),
+          ...(startResult.lotNo ? { lot: startResult.lotNo } : {}),
           message: 'Start request accepted.'
         };
       case StartTaskResult.ALREADY_RUNNING:

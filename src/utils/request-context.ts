@@ -22,6 +22,8 @@ export interface RequestContext {
   apiKey?: string;    // API key for the current request
   clientName?: string;  // MCP client name from initialize.clientInfo
   clientVersion?: string;  // MCP client version from initialize.clientInfo
+  toolInput?: Record<string, unknown>;
+  toolOutput?: Record<string, unknown>;
   errorContext?: RequestErrorContext;
   startTime: number;
   [key: string]: any;

@@ -167,7 +167,7 @@ export class AppConfig {
       },
       tasks: {
         enabled: this.parseBoolean(process.env.MCP_TASKS_ENABLED, true),
-        pollIntervalMs: this.parseInteger(process.env.EXECUTION_TASK_POLL_INTERVAL_MS, 1000, 100, 60000),
+        pollIntervalMs: this.parseInteger(process.env.EXECUTION_TASK_POLL_INTERVAL_MS, 3000, 100, 60000),
         resultTtlMs: this.parseNullableInteger(process.env.EXECUTION_TASK_RESULT_TTL_SECONDS, 3600, 0, 604800),
         lockTtlMs: this.parseInteger(process.env.EXECUTION_TASK_LOCK_TTL_SECONDS, 300, 1, 86400) * 1000,
         credentialHandleTtlMs: this.parseInteger(process.env.EXECUTION_TASK_CREDENTIAL_HANDLE_TTL_SECONDS, 300, 1, 86400) * 1000

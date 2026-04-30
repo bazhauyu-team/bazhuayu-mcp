@@ -160,16 +160,17 @@ test('powershell sync supports Bazhuayu target remaps and bazhuayu replacements'
           {
             name: 'bazhuayu',
             targetRoot: '../bazhuayuMCP',
-            ignore: ['.sync-map.json', 'README.md', 'src/config/messages.bzy.ts'],
+            ignore: ['.sync-map.json', 'README.md', 'docs/QuickStart.md', 'src/config/messages.bzy.ts'],
             remap: {
               'README.en.md': 'README.md',
+              'docs/QuickStart.en.md': 'docs/QuickStart.md',
               'src/config/messages.op.ts': 'src/config/messages.ts'
             }
           },
           {
             name: 'bazhuayu',
             targetRoot: '../Bazhuayu-MCP',
-            ignore: ['.sync-map.json', 'README.en.md', 'src/config/messages.op.ts'],
+            ignore: ['.sync-map.json', 'README.en.md', 'docs/QuickStart.en.md', 'src/config/messages.op.ts'],
             remap: {
               'src/config/messages.bzy.ts': 'src/config/messages.ts'
             },
@@ -196,6 +197,8 @@ test('powershell sync supports Bazhuayu target remaps and bazhuayu replacements'
   await fs.writeFile(path.join(sourceRepo, 'src', 'config', 'messages.op.ts'), 'export default "bazhuayu OP";\n', 'utf8');
   await fs.writeFile(path.join(sourceRepo, 'src', 'config', 'messages.bzy.ts'), 'export default "bazhuayu BZY";\n', 'utf8');
   await fs.writeFile(path.join(sourceRepo, 'docs', 'bazhuayuGuide.md'), 'Use bazhuayu here.\n', 'utf8');
+  await fs.writeFile(path.join(sourceRepo, 'docs', 'QuickStart.md'), '# bazhuayu 中文文档\n', 'utf8');
+  await fs.writeFile(path.join(sourceRepo, 'docs', 'QuickStart.en.md'), '# bazhuayu English docs\n', 'utf8');
 
   await run('git', ['add', '.'], sourceRepo);
   await run('git', ['commit', '-m', 'initial'], sourceRepo);
@@ -225,6 +228,16 @@ test('powershell sync supports Bazhuayu target remaps and bazhuayu replacements'
     await fs.readFile(path.join(bzyTargetRepo, 'docs', 'bazhuayuGuide.md'), 'utf8'),
     'Use bazhuayu here.\n'
   );
+  assert.equal(
+    await fs.readFile(path.join(opTargetRepo, 'docs', 'QuickStart.md'), 'utf8'),
+    '# bazhuayu English docs\n'
+  );
+  assert.equal(
+    await fs.readFile(path.join(bzyTargetRepo, 'docs', 'QuickStart.md'), 'utf8'),
+    '# bazhuayu 中文文档\n'
+  );
+  await assert.rejects(fs.stat(path.join(opTargetRepo, 'docs', 'QuickStart.en.md')));
+  await assert.rejects(fs.stat(path.join(bzyTargetRepo, 'docs', 'QuickStart.en.md')));
   await assert.rejects(fs.stat(path.join(bzyTargetRepo, 'README.en.md')));
   assert.match(stdout, /\[sync:bazhuayu\] copy src\/config\/messages\.op\.ts -> src\/config\/messages\.ts/);
   assert.match(stdout, /\[sync:bazhuayu\] copy src\/config\/messages\.bzy\.ts -> src\/config\/messages\.ts/);
@@ -243,10 +256,16 @@ test('repository sync config ignores .githooks and both sync scripts', async () 
   assert.ok(targets.bazhuayu.ignore.includes('README.md'));
   assert.ok(!targets.bazhuayu.ignore.includes('README.en.md'));
   assert.equal(targets.bazhuayu.remap['README.en.md'], 'README.md');
+  assert.ok(targets.bazhuayu.ignore.includes('docs/Overview.md'));
+  assert.ok(targets.bazhuayu.ignore.includes('docs/QuickStart.md'));
+  assert.equal(targets.bazhuayu.remap['docs/Overview.en.md'], 'docs/Overview.md');
+  assert.equal(targets.bazhuayu.remap['docs/QuickStart.en.md'], 'docs/QuickStart.md');
   assert.ok(targets.bazhuayu.ignore.includes('scripts/post-commit-sync.ps1'));
   assert.ok(targets.bazhuayu.ignore.includes('scripts/post-commit-sync.sh'));
 
   assert.ok(targets.bazhuayu.ignore.includes('README.en.md'));
+  assert.ok(targets.bazhuayu.ignore.includes('docs/Overview.en.md'));
+  assert.ok(targets.bazhuayu.ignore.includes('docs/QuickStart.en.md'));
   assert.ok(!targets.bazhuayu.ignore.includes('README.md'));
   assert.equal(targets.bazhuayu.remap['src/config/messages.bzy.ts'], 'src/config/messages.ts');
   assert.equal(

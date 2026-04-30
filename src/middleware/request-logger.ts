@@ -320,6 +320,14 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
     const errorInfo = extractErrorInfo(responseBody, res.statusCode);
 
     // Build base log options
+    const meta: Record<string, unknown> = { responseSummary };
+    if (latestContext.toolInput) {
+      meta.toolInput = latestContext.toolInput;
+    }
+    if (latestContext.toolOutput) {
+      meta.toolOutput = latestContext.toolOutput;
+    }
+
     const logOptions: LogOptions = {
       // Request context
       requestId: latestContext.requestId,
@@ -341,7 +349,7 @@ export const requestLogger = (req: Request, res: Response, next: NextFunction): 
       status: effectiveStatus,
       duration,
       responseSize,
-      meta: { responseSummary }
+      meta
     };
 
     // Determine log level based on error status

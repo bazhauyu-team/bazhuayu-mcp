@@ -10,14 +10,14 @@ import {
   ToolDefinition,
   ToolTaskRegistration
 } from './tool-definition.js';
+import { buildToolExecutionLogMeta } from './tool-execution-logging.js';
 import {
   handleError,
   checkAuth,
   toMcpResponse,
   createSuccessResponse
 } from './middleware.js';
-import { emitMcpLog } from '../mcp/logging-capability.js';
-import { Logger } from '../utils/logger.js';
+import { RequestContextManager } from '../utils/request-context.js';
 
 function isApiResponseLike(value: unknown): value is { success: boolean } {
   return (
@@ -89,123 +89,22 @@ function getTaskOperationMeta(operation: TaskOperationName) {
   };
 }
 
-async function emitToolStartLog(
-  server: McpServer,
-  tool: ToolDefinition,
-  extraMeta?: Record<string, unknown>
-): Promise<void> {
-  await emitMcpLog(server, {
-    level: 'info',
-    logger: 'bazhuayu.mcp.tool',
-    data: `Starting tool: ${tool.name}`
-  }, {
-    meta: {
-      toolName: tool.name,
-      ...extraMeta
-    }
-  });
-}
+function writeToolLogContext(meta?: Record<string, unknown>): void {
+  if (!meta) {
+    return;
+  }
 
-async function emitToolSuccessLog(
-  server: McpServer,
-  tool: ToolDefinition,
-  extraMeta?: Record<string, unknown>
-): Promise<void> {
-  await emitMcpLog(server, {
-    level: 'info',
-    logger: 'bazhuayu.mcp.tool',
-    data: `Tool succeeded: ${tool.name}`
-  }, {
-    meta: {
-      toolName: tool.name,
-      ...extraMeta
-    }
-  });
-}
+  const update: Record<string, unknown> = {};
+  if (meta.toolInput) {
+    update.toolInput = meta.toolInput;
+  }
+  if (meta.toolOutput) {
+    update.toolOutput = meta.toolOutput;
+  }
 
-async function emitToolAuthRejectedLog(
-  server: McpServer,
-  tool: ToolDefinition,
-  extraMeta?: Record<string, unknown>
-): Promise<void> {
-  await emitMcpLog(server, {
-    level: 'warning',
-    logger: 'bazhuayu.mcp.tool',
-    data: `Tool rejected by authentication guard: ${tool.name}`
-  }, {
-    meta: {
-      toolName: tool.name,
-      ...extraMeta
-    }
-  });
-}
-
-async function emitToolFailureLog(
-  server: McpServer,
-  tool: ToolDefinition,
-  error: unknown,
-  extraMeta?: Record<string, unknown>
-): Promise<void> {
-  await emitMcpLog(server, {
-    level: 'error',
-    logger: 'bazhuayu.mcp.tool',
-    data: `Tool failed: ${tool.name}${error instanceof Error ? ` - ${error.message}` : ''}`
-  }, {
-    meta: {
-      toolName: tool.name,
-      errorName: error instanceof Error ? error.name : undefined,
-      ...extraMeta
-    }
-  });
-}
-
-function createMcpToolLogSink(server: McpServer): ToolExecutionLogSink {
-  return {
-    start: (tool, extraMeta) => emitToolStartLog(server, tool, extraMeta),
-    success: (tool, extraMeta) => emitToolSuccessLog(server, tool, extraMeta),
-    authRejected: (tool, extraMeta) => emitToolAuthRejectedLog(server, tool, extraMeta),
-    failure: (tool, error, extraMeta) => emitToolFailureLog(server, tool, error, extraMeta)
-  };
-}
-
-function createDirectToolLogSink(): ToolExecutionLogSink {
-  const log = Logger.createNamedLogger('bazhuayu.mcp.tool');
-  const toOptions = (
-    tool: ToolDefinition,
-    extraMeta?: Record<string, unknown>
-  ) => ({
-    toolName: tool.name,
-    meta: extraMeta
-  });
-
-  return {
-    start: async (tool, extraMeta) => {
-      log.info(`Starting tool: ${tool.name}`, toOptions(tool, extraMeta));
-    },
-    success: async (tool, extraMeta) => {
-      log.info(`Tool succeeded: ${tool.name}`, toOptions(tool, extraMeta));
-    },
-    authRejected: async (tool, extraMeta) => {
-      log.warn(`Tool rejected by authentication guard: ${tool.name}`, toOptions(tool, extraMeta));
-    },
-    failure: async (tool, error, extraMeta) => {
-      const message = `Tool failed: ${tool.name}${error instanceof Error ? ` - ${error.message}` : ''}`;
-      const options = {
-        ...toOptions(tool, extraMeta),
-        meta: {
-          ...(extraMeta ?? {}),
-          errorName: error instanceof Error ? error.name : undefined
-        }
-      };
-
-      if (error instanceof Error) {
-        log.logError(message, error, options);
-        return;
-      }
-
-      log.error(message, options);
-    }
-  };
+  if (Object.keys(update).length > 0) {
+    RequestContextManager.updateContext(update);
+  }
 }
 
 /**
@@ -219,7 +118,7 @@ function createWrappedHandler<TInput, TOutput>(
 ) {
   return async (args: any): Promise<any> => {
     return executeToolWithMiddleware(tool, getApi, args, {
-      logSink: createMcpToolLogSink(server)
+      logSink: NOOP_TOOL_LOG_SINK
     });
   };
 }
@@ -235,10 +134,9 @@ export async function executeToolWithMiddleware<TInput, TOutput>(
     const logSink = options?.logSink ?? NOOP_TOOL_LOG_SINK;
     // Create API instance on each request for fresh token
     const api = await getApi();
+    let validInput: TInput | undefined;
 
     try {
-      await logSink.start(tool);
-
       // Middleware 1: Authentication (if required)
       if (tool.requiresAuth) {
         const authError = await checkAuth(api);
@@ -249,7 +147,6 @@ export async function executeToolWithMiddleware<TInput, TOutput>(
       }
 
       // Middleware 2: Input validation
-      let validInput: TInput;
       try {
         validInput = tool.inputSchema.parse(args);
       } catch (error) {
@@ -263,6 +160,10 @@ export async function executeToolWithMiddleware<TInput, TOutput>(
         throw error;
       }
 
+      const startLogMeta = buildToolExecutionLogMeta(tool, validInput);
+      writeToolLogContext(startLogMeta);
+      await logSink.start(tool, startLogMeta);
+
       // Execute the actual handler
       const result = await tool.handler(validInput, getApi);
       const presentedResult =
@@ -274,36 +175,52 @@ export async function executeToolWithMiddleware<TInput, TOutput>(
 
       if (isApiResponseLike(presentedResult)) {
         if (presentedResult.success) {
-          await logSink.success(tool, {
+          const logMeta = buildToolExecutionLogMeta(tool, validInput, result, {
             success: true
           });
+          writeToolLogContext(logMeta);
+          await logSink.success(tool, logMeta);
         } else {
-          await logSink.failure(tool, undefined, {
+          const logMeta = buildToolExecutionLogMeta(tool, validInput, result, {
             success: false
           });
+          writeToolLogContext(logMeta);
+          await logSink.failure(tool, undefined, logMeta);
         }
         return toMcpResponse(presentedResult);
       }
 
       if (!!presentedResult && typeof presentedResult === 'object' && 'content' in (presentedResult as Record<string, unknown>)) {
         if ((presentedResult as { isError?: boolean }).isError) {
-          await logSink.failure(tool, undefined, {
+          const logMeta = buildToolExecutionLogMeta(tool, validInput, result, {
             success: false
           });
+          writeToolLogContext(logMeta);
+          await logSink.failure(tool, undefined, logMeta);
         } else {
-          await logSink.success(tool, {
+          const logMeta = buildToolExecutionLogMeta(tool, validInput, result, {
             success: true
           });
+          writeToolLogContext(logMeta);
+          await logSink.success(tool, logMeta);
         }
         return toMcpResponse(presentedResult as any);
       }
 
       // Return success response
-      await logSink.success(tool);
+      const logMeta = buildToolExecutionLogMeta(tool, validInput, result);
+      writeToolLogContext(logMeta);
+      await logSink.success(tool, logMeta);
       return toMcpResponse(await createSuccessResponse(presentedResult, api));
 
     } catch (error) {
-      await logSink.failure(tool, error);
+      const logMeta = validInput === undefined ? undefined : buildToolExecutionLogMeta(tool, validInput);
+      writeToolLogContext(logMeta);
+      await logSink.failure(
+        tool,
+        error,
+        logMeta
+      );
 
       // Handle error
       const errorResponse = await handleError(error, api);
@@ -312,7 +229,7 @@ export async function executeToolWithMiddleware<TInput, TOutput>(
 }
 
 export function createDefaultDirectToolLogSink(): ToolExecutionLogSink {
-  return createDirectToolLogSink();
+  return NOOP_TOOL_LOG_SINK;
 }
 
 function createWrappedTaskOperationHandler<TInput, TExtra, TResult>(
@@ -334,18 +251,17 @@ function createWrappedTaskOperationHandler<TInput, TExtra, TResult>(
     const api = await getApi();
 
     try {
-      await emitToolStartLog(server, tool, getTaskOperationMeta(operation));
+      writeToolLogContext(buildToolExecutionLogMeta(tool, args, undefined, getTaskOperationMeta(operation)));
 
       if (tool.requiresAuth) {
         const authError = await checkAuth(api);
         if (authError) {
-          await emitToolAuthRejectedLog(server, tool, getTaskOperationMeta(operation));
           throw new TaskOperationAuthError(authError);
         }
       }
 
       const result = await handler(args, extra);
-      await emitToolSuccessLog(server, tool, getTaskOperationMeta(operation));
+      writeToolLogContext(buildToolExecutionLogMeta(tool, args, result, getTaskOperationMeta(operation)));
       return result;
     } catch (error) {
       if (error instanceof TaskOperationAuthError) {
@@ -356,7 +272,7 @@ function createWrappedTaskOperationHandler<TInput, TExtra, TResult>(
         throw new Error(error.message);
       }
 
-      await emitToolFailureLog(server, tool, error, getTaskOperationMeta(operation));
+      writeToolLogContext(buildToolExecutionLogMeta(tool, args, undefined, getTaskOperationMeta(operation)));
       const errorResponse = await handleError(error, api);
 
       if (options.errorMode === 'mcpResponse') {
