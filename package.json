@@ -12,6 +12,8 @@
     "dev": "tsc && node dist/index.js",
     "clean": "rm -rf dist",
     "test": "npm run build && node --test tests/*.test.mjs",
+    "test:sync": "npm run build && node --test tests/integration/post-commit-sync.test.mjs",
+    "test:export-data": "npm run build && node --test tests/integration/export-data-workflow.test.mjs",
     "smoke:live": "node scripts/live-smoke.mjs"
   },
   "keywords": [],

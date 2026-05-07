@@ -1,6 +1,7 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { formatWorkflowResourceMarkdown } from "./tools/workflow-hints.js";
-import { registerOpenAiWidgetResources } from './widget-adapter/resource-registry.js';
+import { registerWidgetResources } from './widget-adapter/resource-registry.js';
+import type { UiClientPolicy } from './widget-adapter/ui-client-policy.js';
 
 const bazhuayu_WORKFLOW_URI = "bazhuayu://workflow";
 
@@ -30,7 +31,17 @@ export const registerbazhuayuWorkflowResource = (server: McpServer): void => {
 /**
  * Register all MCP resources
  */
-export const registerAllResources = (server: McpServer): void => {
+export const registerAllResources = (
+  server: McpServer,
+  options: {
+    uiPolicy?: UiClientPolicy;
+    /** @deprecated Use uiPolicy. */
+    uiMetaEnabled?: boolean;
+  } = {}
+): void => {
   registerbazhuayuWorkflowResource(server);
-  registerOpenAiWidgetResources(server);
+  registerWidgetResources(server, {
+    uiPolicy: options.uiPolicy,
+    uiMetaEnabled: options.uiMetaEnabled
+  });
 };

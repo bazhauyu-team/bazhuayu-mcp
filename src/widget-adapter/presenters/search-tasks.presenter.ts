@@ -1,6 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import messages from '../../config/messages.js';
-import { createWidgetToolResult } from '../ui-result.js';
+import { createOpenAiWidgetToolResult } from '../ui-result.js';
 import type { ToolUiBinding } from '../tool-ui-contract.js';
 
 interface TaskRow {
@@ -65,7 +65,7 @@ export function presentSearchTasksResult(
       ? `UI already shows the task rows. Found ${rows.length} task result${rows.length === 1 ? '' : 's'}.`
       : 'UI already shows the task rows. No task results matched the current filters.';
 
-  return createWidgetToolResult({
+  return createOpenAiWidgetToolResult({
     binding,
     text: summary,
     structuredContent: {

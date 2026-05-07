@@ -6,8 +6,8 @@
  * 1) search_templates
  *    - Request:  GET /api/templateservice/templates/queryByPhrase?queryPhrase={keyword}
  *    - Response: { data: QueryByPhraseTemplateResultDto[] } (relevance order)
- *    - Tool maps: cloud-first template search with local-only fallback; exposes `workflowHint`, `listSemantics`,
- *      and `recommendedTemplate` so callers can safely pick the best cloud-capable result.
+ *    - Tool maps: cloud-first template search with local-only fallback; exposes `workflowHint`
+ *      and `recommendedTemplateName` so callers can locate the best cloud-capable result in `templates`.
  *      Search first requests cloud-capable templates (runOn=2,3). If fewer than `limit`, it appends local-only
  *      templates (runOn=1) and includes desktop download guidance.
  *
@@ -241,29 +241,10 @@ const DOWNLOAD_SITE_INTL =
 const DOWNLOAD_SITE_CN =
   process.env.bazhuayu_DOWNLOAD_CN_URL || 'https://www.bazhuayu.com/download';
 
-/**
- * Template supports running on bazhuayu cloud (includes "cloud only" and "cloud + local").
- * Local-only templates (runOn === Local) are excluded from search_templates results.
- */
-function templateSupportsCloudScraping(runOn: number | undefined | null): boolean {
-  const n = Number(runOn);
-  return n === RunOn.Cloud || n === RunOn.Both;
-}
-
 function templateIsLocalOnly(runOn: number | undefined | null): boolean {
   const n = Number(runOn);
   return n === RunOn.Local;
 }
-
-/**
- * When the search API returns results in relevance order, `data[0]` is the best match.
- * If that row is local-only, MCP cannot run it via execute_task — guide user to desktop client.
- */
-const SEARCH_LIST_SEMANTICS = {
-  rawApiOrder: 'relevance' as const,
-  /** How `templates` is built before page slicing */
-  templatesBuiltBy: 'cloud_first_then_local_fallback' as const
-};
 
 function parseTemplateOutputSchema(
   outputSchema: string | undefined,
@@ -402,13 +383,11 @@ export const searchTemplateTool: ToolDefinition = {
           parameters: schemaEntry.parameters,
           outputSchema: schemaEntry.outputSchema
         };
-        const exactTemplate = TemplateSearchService.withTemplateSelectionMetadata(
-          TemplateSearchService.buildExactTemplateResult(
-            templateView,
-            versionDetail,
-            downloadUrl,
-            schemaEntry
-          )
+        const exactTemplate = TemplateSearchService.buildExactTemplateResult(
+          templateView,
+          versionDetail,
+          downloadUrl,
+          schemaEntry
         );
 
         return {
@@ -456,16 +435,7 @@ export const searchTemplateTool: ToolDefinition = {
     const localOnlyMatches = localResponse.data || [];
 
     const rawList = [...cloudResults, ...localOnlyMatches];
-    const recommendedTemplate = TemplateSearchService.buildRecommendedTemplate(cloudResults);
-    const templateKinds =
-      typeof (api as { getTemplateKinds?: () => Promise<Array<{ kindId: number; kindName?: string }>> }).getTemplateKinds === 'function'
-        ? await (api as { getTemplateKinds: () => Promise<Array<{ kindId: number; kindName?: string }>> })
-            .getTemplateKinds()
-            .catch(() => [])
-        : [];
-    const templateKindMap = new Map(
-      templateKinds.map((kind) => [kind.kindId, kind.kindName || String(kind.kindId)])
-    );
+    const recommendedTemplateName = TemplateSearchService.buildRecommendedTemplateName(cloudResults);
     const totalMatching = rawList.length;
     const totalPages = Math.max(1, Math.ceil(totalMatching / Math.max(limit, 1)));
     const safePage = Math.min(page, totalPages);
@@ -489,22 +459,16 @@ export const searchTemplateTool: ToolDefinition = {
         templateName: t.slug || ''
       });
       const isLocalOnly = templateIsLocalOnly(t.runOn);
-      const supportsCloudScraping = templateSupportsCloudScraping(t.runOn);
 
-      return TemplateSearchService.withTemplateSelectionMetadata({
+      return {
         templateId: t.id,
         templateName: t.slug || '',
         displayName: displayFields.displayName,
         shortDescription: displayFields.shortDescription.slice(0, 120),
         ...(displayFields.imageUrl ? { imageUrl: displayFields.imageUrl } : {}),
-        supportsCloudScraping,
-        runOnLabel: EnumLabelUtil.runOnLabel(t.runOn),
+        executionMode: EnumLabelUtil.runOnLabel(t.runOn),
         popularityLikes: t.likes ?? 0,
         pricePerData: t.pricePerData ?? null,
-        kindIds: t.kindIds ?? [],
-        kindLabels: (t.kindIds ?? [])
-          .map((kindId) => templateKindMap.get(kindId))
-          .filter((label): label is string => typeof label === 'string' && label.length > 0),
         lastModificationTime: t.lastModificationTime ?? null,
         inputSchema: buildInputSchemaForLlm(versionDetail?.parameters, { sourceSchema }),
         ...(sourceSummary.hasSourceOptions
@@ -521,7 +485,7 @@ export const searchTemplateTool: ToolDefinition = {
             downloadUrl
           }
           : {})
-      });
+      };
     });
 
     const topRelevanceLocalOnly =
@@ -536,7 +500,6 @@ export const searchTemplateTool: ToolDefinition = {
     if (cloudResults.length === 0 && localOnlyMatches.length > 0) {
       const preview = templates.map((t) => ({
         ...t,
-        supportsCloudScraping: false,
         note: 'Local collection only — install the bazhuayu desktop client from the official site; not available for execute_task on this MCP server.',
         downloadUrl
       }));
@@ -544,8 +507,7 @@ export const searchTemplateTool: ToolDefinition = {
       return {
         success: true,
         workflowHint: SEARCH_WORKFLOW_HINT,
-        listSemantics: SEARCH_LIST_SEMANTICS,
-        recommendedTemplate,
+        recommendedTemplateName,
         page: 1,
         pageSize: limit,
         totalMatchingTemplates: localOnlyMatches.length,
@@ -571,8 +533,7 @@ export const searchTemplateTool: ToolDefinition = {
       return {
         success: true,
         workflowHint: SEARCH_WORKFLOW_HINT,
-        listSemantics: SEARCH_LIST_SEMANTICS,
-        recommendedTemplate,
+        recommendedTemplateName,
         page: 1,
         pageSize: limit,
         totalMatchingTemplates: 0,
@@ -593,8 +554,7 @@ export const searchTemplateTool: ToolDefinition = {
       return {
         success: true,
         workflowHint: SEARCH_WORKFLOW_HINT,
-        listSemantics: SEARCH_LIST_SEMANTICS,
-        recommendedTemplate,
+        recommendedTemplateName,
         page: 1,
         pageSize: limit,
         totalMatchingTemplates: 0,
@@ -613,8 +573,7 @@ export const searchTemplateTool: ToolDefinition = {
     return {
       success: true,
       workflowHint: SEARCH_WORKFLOW_HINT,
-      listSemantics: SEARCH_LIST_SEMANTICS,
-      recommendedTemplate,
+      recommendedTemplateName,
       page: safePage,
       pageSize: limit,
       totalMatchingTemplates: totalMatching,
@@ -656,7 +615,7 @@ const executeTaskInputSchema = z.preprocess(
       .string()
       .min(1)
       .describe(
-        'Template id from search_templates: use `templateName`. Prefer `recommendedTemplate.templateName`, exact `template.templateName`, or `templates[].templateName`.'
+        'Template name from search_templates. Prefer `recommendedTemplateName`, exact `template.templateName`, or `templates[].templateName`.'
       ),
     taskName: z
       .string()
@@ -773,7 +732,6 @@ async function prepareExecuteTaskExecution(
           recoverable: true,
           templateId,
           templateName: resolvedTemplateName,
-          supportsCloudScraping: false,
           suggestedNextCall: {
             tool: 'search_templates' as const,
             args: { keyword: extractWebsiteHint(resolvedTemplateName) }

@@ -1,6 +1,7 @@
 import { AsyncLocalStorage } from 'async_hooks';
 import { v4 as uuidv4 } from 'uuid';
 import { LogOptions } from '../types/log-entry.js';
+import type { UiClientPolicy } from '../widget-adapter/ui-client-policy.js';
 
 /**
  * Request context data stored for the duration of a request
@@ -22,6 +23,7 @@ export interface RequestContext {
   apiKey?: string;    // API key for the current request
   clientName?: string;  // MCP client name from initialize.clientInfo
   clientVersion?: string;  // MCP client version from initialize.clientInfo
+  uiPolicy?: UiClientPolicy;
   toolInput?: Record<string, unknown>;
   toolOutput?: Record<string, unknown>;
   errorContext?: RequestErrorContext;

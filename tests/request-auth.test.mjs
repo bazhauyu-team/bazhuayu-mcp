@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 const {
   extractBearerToken,
+  hasRequestAuthCredentials,
   looksLikeJwtToken,
   extractApiKeyFromHeaders
 } = await import('../dist/utils/request-auth.js');
@@ -26,4 +27,10 @@ test('extractApiKeyFromHeaders keeps JWT-like bearer token for JWT flow', () => 
 
 test('extractBearerToken trims standard bearer prefix', () => {
   assert.equal(extractBearerToken('Bearer   abc123   '), 'abc123');
+});
+
+test('hasRequestAuthCredentials detects supported request credentials', () => {
+  assert.equal(hasRequestAuthCredentials('Bearer aaa.bbb.ccc', undefined), true);
+  assert.equal(hasRequestAuthCredentials(undefined, 'op_sk_demo_key'), true);
+  assert.equal(hasRequestAuthCredentials(undefined, undefined), false);
 });
