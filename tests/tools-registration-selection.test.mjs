@@ -86,3 +86,38 @@ test('registerAllTools uses task registration only for task-aware tools', () => 
   assert.equal(typeof registeredTools[0].handler, 'function');
   assert.equal(typeof registeredToolTasks[0].handler.createTask, 'function');
 });
+
+test('registerAllTools includes OpenAI registration _meta when UI meta is enabled', () => {
+  const registered = [];
+  const fakeServer = {
+    registerTool(name, meta, handler) {
+      registered.push({ name, meta, handler });
+    }
+  };
+  const selected = allTools.filter((tool) => tool.name === 'search_templates');
+
+  registerAllTools(fakeServer, undefined, undefined, undefined, selected, {
+    uiMetaEnabled: true
+  });
+
+  assert.equal(registered[0].name, 'search_templates');
+  assert.equal(registered[0].meta._meta['openai/outputTemplate'], 'ui://widget/search-templates.html');
+  assert.equal(registered[0].meta._meta['openai/widgetAccessible'], true);
+});
+
+test('registerAllTools omits OpenAI registration _meta when UI meta is disabled', () => {
+  const registered = [];
+  const fakeServer = {
+    registerTool(name, meta, handler) {
+      registered.push({ name, meta, handler });
+    }
+  };
+  const selected = allTools.filter((tool) => tool.name === 'search_templates');
+
+  registerAllTools(fakeServer, undefined, undefined, undefined, selected, {
+    uiMetaEnabled: false
+  });
+
+  assert.equal(registered[0].name, 'search_templates');
+  assert.equal('_meta' in registered[0].meta, false);
+});

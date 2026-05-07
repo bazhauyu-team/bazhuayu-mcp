@@ -40,53 +40,14 @@ export function getTemplateDisplayFields(template: QueryByPhraseTemplateResultDt
   };
 }
 
-export function withTemplateSelectionMetadata<T extends {
-  templateId?: number;
-  templateName?: string;
-  displayName?: string;
-  supportsCloudScraping?: boolean;
-}>(template: T): T & {
-  selectable: boolean;
-  selectionMode: 'execute_task' | 'local_only';
-  templateRef: {
-    templateId: number | undefined;
-    templateName: string;
-    displayName: string;
-  };
-} {
-  const selectable = template.supportsCloudScraping === true;
-
-  return {
-    ...template,
-    selectable,
-    selectionMode: selectable ? 'execute_task' : 'local_only',
-    templateRef: {
-      templateId: template.templateId,
-      templateName: template.templateName || '',
-      displayName: template.displayName || template.templateName || ''
-    }
-  };
-}
-
-export function buildRecommendedTemplate(rawList: QueryByPhraseTemplateResultDto[]) {
+export function buildRecommendedTemplateName(rawList: QueryByPhraseTemplateResultDto[]): string | null {
   const idx = rawList.findIndex((t) => templateSupportsCloudScraping(t.runOn));
   if (idx < 0) {
     return null;
   }
 
   const t = rawList[idx];
-  const displayFields = getTemplateDisplayFields(t);
-  return {
-    templateName: t.slug || '',
-    displayName: displayFields.displayName,
-    shortDescription: displayFields.shortDescription.slice(0, 120),
-    ...(displayFields.imageUrl ? { imageUrl: displayFields.imageUrl } : {}),
-    supportsCloudScraping: true,
-    runOnLabel: EnumLabelUtil.runOnLabel(t.runOn),
-    popularityLikes: t.likes ?? 0,
-    rankInRawResults: idx + 1,
-    reason: idx === 0 ? 'best_cloud_relevance_match' : 'first_cloud_capable_match_in_relevance_order'
-  };
+  return t.slug || '';
 }
 
 export function buildTopRelevanceLocalOnlyGuidance(
@@ -103,8 +64,7 @@ export function buildTopRelevanceLocalOnlyGuidance(
       displayName: displayFields.displayName,
       shortDescription: displayFields.shortDescription.slice(0, 120),
       ...(displayFields.imageUrl ? { imageUrl: displayFields.imageUrl } : {}),
-      supportsCloudScraping: false,
-      runOnLabel: EnumLabelUtil.runOnLabel(top.runOn),
+      executionMode: EnumLabelUtil.runOnLabel(top.runOn),
       popularityLikes: top.likes ?? 0
     },
     downloadUrl,
@@ -145,7 +105,6 @@ export function buildExactTemplateResult(
 ) {
   const templateName = templateView.slug || '';
   const displayName = templateView.name || templateView.slug || String(templateView.id);
-  const supportsCloudScraping = templateSupportsCloudScraping(templateView.runOn);
   const sourceSchema = sourceSchemaEntry?.sourceSchema;
   const sourceSummary = sourceSchema ? buildSourceSummary(sourceSchema) : null;
   const sourcePayload =
@@ -165,8 +124,7 @@ export function buildExactTemplateResult(
     templateName,
     displayName,
     shortDescription: (templateView.prompts || '').slice(0, 160),
-    supportsCloudScraping,
-    runOnLabel: EnumLabelUtil.runOnLabel(templateView.runOn),
+    executionMode: EnumLabelUtil.runOnLabel(templateView.runOn),
     inputSchema: buildInputSchemaForLlm(versionDetail?.parameters || templateView.parameters, {
       sourceSchema
     }),

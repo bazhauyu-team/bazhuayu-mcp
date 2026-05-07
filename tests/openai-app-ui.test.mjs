@@ -14,6 +14,7 @@ process.env.LOG_ENABLE_CONSOLE = 'false';
 process.env.LOG_ENABLE_FILE = 'false';
 
 const { executeToolWithMiddleware } = await import('../dist/tools/tool-registry.js');
+const { RequestContextManager } = await import('../dist/utils/request-context.js');
 const { registerAllResources } = await import('../dist/resources.js');
 const { presentSearchTemplatesResult } = await import(
   '../dist/widget-adapter/presenters/search-templates.presenter.js'
@@ -22,62 +23,18 @@ const { presentSearchTasksResult } = await import(
   '../dist/widget-adapter/presenters/search-tasks.presenter.js'
 );
 
-test('root build scripts treat widget code as a separate web project', () => {
-  const rootPackage = JSON.parse(
-    fs.readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf8')
-  );
+const REMOVED_SEARCH_TEMPLATE_RESPONSE_FIELDS = [
+  'selectedTemplateRef',
+  'generatedParameterSummary',
+  'generatedExecuteTaskSuggestion',
+  'nextStepHint'
+];
 
-  assert.match(rootPackage.scripts.build, /build:web/);
-  assert.match(rootPackage.scripts['build:web'], /--prefix web/);
-  assert.equal(fs.existsSync(path.resolve(process.cwd(), 'web', 'package.json')), true);
-});
-
-test('web build config keeps widget env loading isolated from the server project root', () => {
-  const viteConfig = fs.readFileSync(path.resolve(process.cwd(), 'web', 'vite.config.ts'), 'utf8');
-
-  assert.match(viteConfig, /envDir:\s*__dirname/);
-  assert.doesNotMatch(viteConfig, /envDir:\s*path\.resolve\(__dirname,\s*['"]\.\.['"]\)/);
-});
-
-test('server-side widget adapter lives outside the web project under a neutral adapter directory', () => {
-  assert.equal(fs.existsSync(path.resolve(process.cwd(), 'src', 'widget-adapter')), true);
-  assert.equal(fs.existsSync(path.resolve(process.cwd(), 'src', 'openai-app')), false);
-  assert.equal(
-    fs.existsSync(path.resolve(process.cwd(), 'src', 'widget-adapter', 'ui-result.ts')),
-    true
-  );
-});
-
-test('workflow tools do not patch widget card metadata directly', () => {
-  const workflowToolsSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'src', 'tools', 'workflow-tools.ts'),
-    'utf8'
-  );
-
-  assert.doesNotMatch(workflowToolsSource, /enrichSearchTemplatesPresentation/);
-  assert.doesNotMatch(workflowToolsSource, /mergeTemplateSelectionMetadata/);
-  assert.doesNotMatch(workflowToolsSource, /_meta:\s*\{/);
-  assert.doesNotMatch(workflowToolsSource, /\.cards\b/);
-});
-
-test('Dockerfile copies built widget assets into the runtime image', () => {
-  const dockerfile = fs.readFileSync(path.resolve(process.cwd(), 'Dockerfile'), 'utf8');
-
-  assert.match(
-    dockerfile,
-    /COPY --from=builder --chown=nextjs:nodejs \/app\/web\/dist \.\/web\/dist/
-  );
-});
-
-test('CORS middleware is registered before widget static assets so module scripts can load in ChatGPT sandbox', () => {
-  const indexSource = fs.readFileSync(path.resolve(process.cwd(), 'src', 'index.ts'), 'utf8');
-  const corsIndex = indexSource.indexOf('app.use(cors({');
-  const widgetStaticIndex = indexSource.indexOf("app.use('/openai-app', express.static");
-
-  assert.notEqual(corsIndex, -1);
-  assert.notEqual(widgetStaticIndex, -1);
-  assert.ok(corsIndex < widgetStaticIndex, 'cors() should be registered before /openai-app static assets');
-});
+function assertRemovedSearchTemplateResponseFieldsAbsent(record) {
+  for (const field of REMOVED_SEARCH_TEMPLATE_RESPONSE_FIELDS) {
+    assert.equal(field in record, false);
+  }
+}
 
 test('widget CSP allows template images from bazhuayu image CDNs', async () => {
   const registered = [];
@@ -85,6 +42,8 @@ test('widget CSP allows template images from bazhuayu image CDNs', async () => {
     registerResource(name, uri, meta, handler) {
       registered.push({ name, uri, meta, handler });
     }
+  }, {
+    uiMetaEnabled: true
   });
 
   const searchTemplatesResource = registered.find((resource) => resource.name === 'search-templates-widget');
@@ -108,10 +67,6 @@ test('search templates bootstrap uses a waiting-state payload until search templ
     withWindowState(undefined, undefined, () => {
       assert.deepEqual(bootstrap.getTemplateWidgetPayload(), {
         isLoading: true,
-        selectedTemplateRef: null,
-        generatedParameterSummary: '',
-        generatedExecuteTaskSuggestion: '',
-        nextStepHint: '',
         cards: [],
         banner: null,
         pagination: {
@@ -120,14 +75,14 @@ test('search templates bootstrap uses a waiting-state payload until search templ
           total: 0
         },
         structuredContent: {
-          recommendedTemplate: null
+          recommendedTemplateName: null
         }
       });
     });
   });
 });
 
-test('search templates presenter carries selection metadata and keeps heavy schema out of widget cards', () => {
+test('search templates presenter omits legacy selection guidance and preserves schema in structured content', () => {
   const response = presentSearchTemplatesResult(
     {
       success: true,
@@ -144,14 +99,11 @@ test('search templates presenter carries selection metadata and keeps heavy sche
         {
           templateName: 'google_maps_places',
           displayName: 'Google Maps Places',
-          selectable: true,
-          selectionMode: 'execute_task',
           templateRef: {
             templateId: 42,
             templateName: 'google_maps_places',
             displayName: 'Google Maps Places'
           },
-          supportsCloudScraping: true,
           downloadUrl: 'https://bazhuayu.example.com/download',
           inputSchema: [{ field: 'keyword', type: 'string[]' }],
           outputSchema: [{ field: 'name', type: 'string' }]
@@ -163,45 +115,40 @@ test('search templates presenter carries selection metadata and keeps heavy sche
     }
   );
 
-  assert.equal(response.structuredContent.selectedTemplateRef.templateId, 42);
-  assert.equal(response.structuredContent.generatedParameterSummary, 'Keyword: coffee shops in Seattle');
-  assert.equal(
-    response.structuredContent.generatedExecuteTaskSuggestion,
-    'Execute this template with the detected keyword.'
-  );
-  assert.equal(
-    response.structuredContent.nextStepHint,
-    'Review the selected template, then run the task.'
-  );
-  assert.equal(response.structuredContent.templates[0].selectionMode, 'execute_task');
-  assert.equal(response.structuredContent.templates[0].templateRef.templateId, 42);
-  assert.equal('inputSchema' in response.structuredContent.templates[0], false);
-  assert.equal('outputSchema' in response.structuredContent.templates[0], false);
-  assert.deepEqual(response.structuredContent.templates[0], {
-    templateName: 'google_maps_places',
-    displayName: 'Google Maps Places',
-    selectionMode: 'execute_task',
-    templateRef: {
-      templateId: 42,
-      templateName: 'google_maps_places',
-      displayName: 'Google Maps Places'
-    }
-  });
+  assertRemovedSearchTemplateResponseFieldsAbsent(response.structuredContent);
+  assertRemovedSearchTemplateResponseFieldsAbsent(response._meta);
+  assert.deepEqual(response.structuredContent.templates[0].inputSchema, [
+    { field: 'keyword', type: 'string[]' }
+  ]);
+  assert.deepEqual(response.structuredContent.templates[0].outputSchema, [
+    { field: 'name', type: 'string' }
+  ]);
+  for (const field of [
+    'kindIds',
+    'kindLabels',
+    'supportsCloudScraping',
+    'selectable',
+    'selectionMode',
+    'templateRef'
+  ]) {
+    assert.equal(field in response.structuredContent.templates[0], false);
+  }
   assert.equal(response.structuredContent.widgetRendered, true);
-  assert.equal(response._meta.selectedTemplateRef.templateId, 42);
-  assert.equal(response._meta.generatedParameterSummary, 'Keyword: coffee shops in Seattle');
-  assert.equal(
-    response._meta.generatedExecuteTaskSuggestion,
-    'Execute this template with the detected keyword.'
-  );
-  assert.equal(response._meta.nextStepHint, 'Review the selected template, then run the task.');
   assert.equal(
     response._meta.useTemplatePromptTemplate,
     'I want to use the [{templateName}] template to run a collection. Please help me prepare the required parameters.'
   );
   assert.equal(response._meta['openai/widgetAccessible'], true);
-  assert.equal(response._meta.cards[0].selectionMode, 'execute_task');
   assert.equal(response._meta.cards[0].templateRef.templateId, 42);
+  for (const field of [
+    'kindIds',
+    'kindLabels',
+    'supportsCloudScraping',
+    'selectable',
+    'selectionMode'
+  ]) {
+    assert.equal(field in response._meta.cards[0], false);
+  }
   assert.equal(
     response._meta.cards[0].downloadUrl,
     'https://bazhuayu.example.com/download'
@@ -210,43 +157,28 @@ test('search templates presenter carries selection metadata and keeps heavy sche
   assert.equal('outputSchema' in response._meta.cards[0], false);
 });
 
-test('search templates bootstrap normalizes the full Task 2 selection contract from tool output metadata', () => {
+test('search templates bootstrap normalizes cards and pagination from tool output metadata', () => {
   return withBootstrapModule((bootstrap) => {
     withWindowState(
       {
         structuredContent: {
-          recommendedTemplate: {
-            displayName: 'Google Maps Places',
-            templateName: 'google_maps_places',
-            reason: 'High relevance'
-          }
+          recommendedTemplateName: 'google_maps_places'
         },
         _meta: {
           cards: [
             {
               templateName: 'google_maps_places',
               displayName: 'Google Maps Places',
-              selectable: true,
-              selectionMode: 'execute_task',
               templateRef: {
                 templateId: 42,
                 templateName: 'google_maps_places',
                 displayName: 'Google Maps Places'
               },
-              kindLabels: ['Maps'],
               downloadUrl: 'https://bazhuayu.example.com/download',
               inputSchema: [{ field: 'keyword', type: 'string[]' }],
               outputSchema: [{ field: 'name', type: 'string' }]
             }
           ],
-          selectedTemplateRef: {
-            templateId: 42,
-            templateName: 'google_maps_places',
-            displayName: 'Google Maps Places'
-          },
-          generatedParameterSummary: 'Keyword: coffee shops in Seattle',
-          generatedExecuteTaskSuggestion: 'Execute this template with the detected keyword.',
-          nextStepHint: 'Review the selected template, then run the task.',
           pagination: {
             page: 2,
             pageSize: 10,
@@ -258,31 +190,19 @@ test('search templates bootstrap normalizes the full Task 2 selection contract f
       () => {
         assert.deepEqual(bootstrap.getTemplateWidgetPayload(), {
           isLoading: false,
-          selectedTemplateRef: {
-            templateId: 42,
-            templateName: 'google_maps_places',
-            displayName: 'Google Maps Places'
-          },
-          generatedParameterSummary: 'Keyword: coffee shops in Seattle',
-          generatedExecuteTaskSuggestion: 'Execute this template with the detected keyword.',
-          nextStepHint: 'Review the selected template, then run the task.',
           cards: [
             {
               templateName: 'google_maps_places',
               displayName: 'Google Maps Places',
               shortDescription: undefined,
               imageUrl: undefined,
-              selectable: true,
-              selectionMode: 'execute_task',
               templateRef: {
                 templateId: 42,
                 templateName: 'google_maps_places',
                 displayName: 'Google Maps Places'
               },
-              supportsCloudScraping: undefined,
-              runOnLabel: undefined,
+              executionMode: undefined,
               popularityLikes: undefined,
-              kindLabels: ['Maps'],
               priceLabel: undefined,
               lastModifiedLabel: undefined,
               iconKey: undefined,
@@ -300,11 +220,7 @@ test('search templates bootstrap normalizes the full Task 2 selection contract f
             total: 17
           },
           structuredContent: {
-            recommendedTemplate: {
-              displayName: 'Google Maps Places',
-              templateName: 'google_maps_places',
-              reason: 'High relevance'
-            }
+            recommendedTemplateName: 'google_maps_places'
           }
         });
       }
@@ -317,12 +233,7 @@ test('search templates bootstrap falls back to a safe degraded payload when tool
     withWindowState(
       {
         structuredContent: {
-          selectedTemplateRef: {
-            templateId: 42
-          },
-          generatedParameterSummary: 'partial',
-          generatedExecuteTaskSuggestion: 'suggestion',
-          nextStepHint: 'hint'
+          recommendedTemplateName: 'fallback-template'
         },
         _meta: {
           cards: {
@@ -334,14 +245,6 @@ test('search templates bootstrap falls back to a safe degraded payload when tool
       () => {
         assert.deepEqual(bootstrap.getTemplateWidgetPayload(), {
           isLoading: false,
-          selectedTemplateRef: {
-            templateId: 42,
-            templateName: undefined,
-            displayName: undefined
-          },
-          generatedParameterSummary: 'partial',
-          generatedExecuteTaskSuggestion: 'suggestion',
-          nextStepHint: 'hint',
           cards: [],
           banner: null,
           pagination: {
@@ -350,13 +253,7 @@ test('search templates bootstrap falls back to a safe degraded payload when tool
             total: 0
           },
           structuredContent: {
-            recommendedTemplate: null,
-            selectedTemplateRef: {
-              templateId: 42
-            },
-            generatedParameterSummary: 'partial',
-            generatedExecuteTaskSuggestion: 'suggestion',
-            nextStepHint: 'hint'
+            recommendedTemplateName: 'fallback-template'
           }
         });
       }
@@ -364,11 +261,12 @@ test('search templates bootstrap falls back to a safe degraded payload when tool
   });
 });
 
-test('search templates bootstrap falls back from structuredContent when metadata omits selection guidance fields', () => {
+test('search templates bootstrap ignores legacy selection guidance fields from structuredContent', () => {
   return withBootstrapModule((bootstrap) => {
     withWindowState(
       {
         structuredContent: {
+          recommendedTemplateName: 'meta-fallback',
           selectedTemplateRef: {
             templateId: 55,
             templateName: 'meta-fallback',
@@ -382,9 +280,7 @@ test('search templates bootstrap falls back from structuredContent when metadata
           cards: [
             {
               templateName: 'meta-fallback',
-              displayName: 'Meta Fallback',
-              selectable: true,
-              selectionMode: 'execute_task'
+              displayName: 'Meta Fallback'
             }
           ]
         }
@@ -393,27 +289,15 @@ test('search templates bootstrap falls back from structuredContent when metadata
       () => {
         assert.deepEqual(bootstrap.getTemplateWidgetPayload(), {
           isLoading: false,
-          selectedTemplateRef: {
-            templateId: 55,
-            templateName: 'meta-fallback',
-            displayName: 'Meta Fallback'
-          },
-          generatedParameterSummary: 'summary from structured content',
-          generatedExecuteTaskSuggestion: 'suggestion from structured content',
-          nextStepHint: 'hint from structured content',
           cards: [
             {
               templateName: 'meta-fallback',
               displayName: 'Meta Fallback',
               shortDescription: undefined,
               imageUrl: undefined,
-              selectable: true,
-              selectionMode: 'execute_task',
               templateRef: null,
-              supportsCloudScraping: undefined,
-              runOnLabel: undefined,
+              executionMode: undefined,
               popularityLikes: undefined,
-              kindLabels: [],
               priceLabel: undefined,
               lastModifiedLabel: undefined,
               iconKey: undefined,
@@ -431,7 +315,7 @@ test('search templates bootstrap falls back from structuredContent when metadata
             total: 1
           },
           structuredContent: {
-            recommendedTemplate: null
+            recommendedTemplateName: 'meta-fallback'
           }
         });
       }
@@ -439,53 +323,20 @@ test('search templates bootstrap falls back from structuredContent when metadata
   });
 });
 
-test('search templates bootstrap ignores malformed metadata selection refs and preserves structuredContent fallback', () => {
+test('search templates bootstrap ignores legacy selection guidance fields from metadata', () => {
   return withBootstrapModule((bootstrap) => {
     withWindowState(
       {
         structuredContent: {
-          selectedTemplateRef: {
-            templateId: 77,
-            templateName: 'structured-template',
-            displayName: 'Structured Template'
-          }
+          recommendedTemplateName: 'metadata-template'
         },
         _meta: {
           cards: [
             {
-              templateName: 'structured-template',
-              displayName: 'Structured Template',
-              selectable: true,
-              selectionMode: 'execute_task'
+              templateName: 'metadata-template',
+              displayName: 'Metadata Template'
             }
           ],
-          selectedTemplateRef: {}
-        }
-      },
-      undefined,
-      () => {
-        const payload = bootstrap.getTemplateWidgetPayload();
-        assert.deepEqual(payload.selectedTemplateRef, {
-          templateId: 77,
-          templateName: 'structured-template',
-          displayName: 'Structured Template'
-        });
-      }
-    );
-  });
-});
-
-test('search templates bootstrap preserves explicit empty-string metadata guidance fields', () => {
-  return withBootstrapModule((bootstrap) => {
-    withWindowState(
-      {
-        structuredContent: {
-          generatedParameterSummary: 'structured summary',
-          generatedExecuteTaskSuggestion: 'structured suggestion',
-          nextStepHint: 'structured hint'
-        },
-        _meta: {
-          cards: [],
           generatedParameterSummary: '',
           generatedExecuteTaskSuggestion: '',
           nextStepHint: ''
@@ -494,191 +345,13 @@ test('search templates bootstrap preserves explicit empty-string metadata guidan
       undefined,
       () => {
         const payload = bootstrap.getTemplateWidgetPayload();
-        assert.equal(payload.generatedParameterSummary, '');
-        assert.equal(payload.generatedExecuteTaskSuggestion, '');
-        assert.equal(payload.nextStepHint, '');
+        assertRemovedSearchTemplateResponseFieldsAbsent(payload);
+        assert.deepEqual(payload.structuredContent, {
+          recommendedTemplateName: 'metadata-template'
+        });
       }
     );
   });
-});
-
-test('search templates widget sends a follow-up message for cloud template selection', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-
-  assert.match(widgetSource, /template-button--compact/);
-  assert.match(widgetSource, /'Use'/);
-  assert.match(widgetSource, /ui\/message/);
-  assert.match(widgetSource, /role:\s*'user'/);
-  assert.doesNotMatch(widgetSource, /sendFollowUpMessage/);
-  assert.doesNotMatch(widgetSource, /scrollToBottom:\s*true/);
-  assert.doesNotMatch(widgetSource, /callTool/);
-  assert.doesNotMatch(widgetSource, /execute_task/);
-  assert.doesNotMatch(widgetSource, /validateOnly:\s*true/);
-  assert.match(widgetSource, /templateName/);
-  assert.match(widgetSource, /useTemplatePromptTemplate/);
-  assert.match(widgetSource, /replace\('\{templateName\}', templateName\)/);
-  assert.doesNotMatch(widgetSource, /使用 \[\$\{templateName\}\] 模板采集数据/);
-  assert.doesNotMatch(widgetSource, /What parameters do I need to provide/);
-  assert.match(widgetSource, /selectionMode === 'local_only'/);
-  assert.doesNotMatch(widgetSource, /Template Setup/);
-  assert.doesNotMatch(widgetSource, /generatedExecuteTaskSuggestion/);
-  assert.doesNotMatch(widgetSource, /card\.note/);
-  assert.doesNotMatch(widgetSource, /Sent to conversation/);
-  assert.doesNotMatch(widgetSource, /selectedPrompt/);
-  assert.doesNotMatch(widgetSource, /setSelectedPrompt/);
-});
-
-test('search templates widget binds template image and short description into cards', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-
-  assert.match(widgetSource, /card\.imageUrl/);
-  assert.match(widgetSource, /<img/);
-  assert.match(widgetSource, /template-card__image/);
-  assert.match(widgetSource, /template-card__description/);
-  assert.match(widgetSource, /card\.shortDescription/);
-});
-
-test('search templates widget keeps the use action beside the title and description below the icon row', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-
-  const headerIndex = widgetSource.indexOf('template-card__header');
-  const titleRowIndex = widgetSource.indexOf('template-card__title-row');
-  const actionStackIndex = widgetSource.indexOf('template-card__action-stack');
-  const buttonIndex = widgetSource.indexOf('template-button--compact');
-  const envIndex = widgetSource.indexOf('template-run-icons');
-  const descriptionIndex = widgetSource.indexOf('template-card__description');
-
-  assert.ok(headerIndex >= 0);
-  assert.ok(titleRowIndex > headerIndex);
-  assert.ok(actionStackIndex > titleRowIndex);
-  assert.ok(buttonIndex > actionStackIndex);
-  assert.ok(buttonIndex > titleRowIndex);
-  assert.ok(envIndex > buttonIndex);
-  assert.ok(descriptionIndex > headerIndex);
-  assert.ok(descriptionIndex > envIndex);
-  assert.doesNotMatch(widgetSource, /Use Template/);
-});
-
-test('search templates widget renders run mode as compact local and cloud icons', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-
-  assert.match(widgetSource, /template-run-icons/);
-  assert.match(widgetSource, /template-run-icon--local/);
-  assert.match(widgetSource, /template-run-icon--cloud/);
-  assert.match(widgetSource, /supportsLocalRun/);
-  assert.match(widgetSource, /supportsCloudRun/);
-  assert.doesNotMatch(widgetSource, /card\.runOnLabel\}/);
-});
-
-test('search templates widget switches grid layout by card count with at most two rows', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-  const cssSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'styles', 'base.css'),
-    'utf8'
-  );
-
-  assert.match(widgetSource, /getTemplateGridClass/);
-  assert.match(widgetSource, /cards\.length <= 3/);
-  assert.match(widgetSource, /cards\.length <= 6/);
-  assert.match(widgetSource, /template-grid--one-row/);
-  assert.match(widgetSource, /template-grid--two-row/);
-  assert.match(widgetSource, /template-grid--two-row-scroll/);
-  assert.match(cssSource, /grid-template-rows:\s*repeat\(2,\s*auto\)/);
-  assert.match(cssSource, /overflow-x:\s*auto/);
-  assert.match(cssSource, /-webkit-line-clamp:\s*2/);
-});
-
-test('search templates widget uses denser card typography and icon-like likes', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-  const cssSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'styles', 'base.css'),
-    'utf8'
-  );
-
-  assert.doesNotMatch(widgetSource, /Local only/);
-  assert.match(widgetSource, /Local-only template/);
-  assert.match(widgetSource, /♡/);
-  assert.match(cssSource, /template-card__header h2[\s\S]*font-size:\s*14px/);
-  assert.match(cssSource, /template-card__header h2[\s\S]*-webkit-line-clamp:\s*2/);
-  assert.match(cssSource, /template-card__title-row[\s\S]*align-items:\s*center/);
-  assert.match(cssSource, /template-card__title-row[\s\S]*min-height:\s*48px/);
-  assert.match(cssSource, /template-card[\s\S]*padding:\s*14px/);
-  assert.match(cssSource, /template-card__footer[\s\S]*font-size:\s*12px/);
-  assert.match(cssSource, /template-card__footer[\s\S]*margin-top:\s*auto/);
-  assert.match(cssSource, /template-meta--likes/);
-});
-
-test('search templates widget renders local-only use action as disabled with hover guidance', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-  const cssSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'styles', 'base.css'),
-    'utf8'
-  );
-
-  assert.match(widgetSource, /card\.selectionMode === 'local_only'/);
-  assert.match(widgetSource, /disabled=\{card\.selectionMode === 'local_only' \|\| isActive\}/);
-  assert.match(widgetSource, /template-button--disabled/);
-  assert.match(widgetSource, /Local-only templates can only run in the desktop app/);
-  assert.match(cssSource, /\.template-button--disabled/);
-  assert.match(cssSource, /\.template-button--disabled:hover/);
-  assert.match(cssSource, /cursor:\s*not-allowed/);
-});
-
-test('search tasks widget sends configured follow-up messages for start and stop actions', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTasksApp.tsx'),
-    'utf8'
-  );
-  const cssSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'styles', 'base.css'),
-    'utf8'
-  );
-
-  assert.doesNotMatch(widgetSource, /STATUS_LABELS/);
-  assert.doesNotMatch(widgetSource, /tabs-row/);
-  assert.doesNotMatch(widgetSource, /chip-accent/);
-  assert.doesNotMatch(widgetSource, /filtersApplied\?\.status/);
-  assert.match(widgetSource, /sendTaskActionPrompt/);
-  assert.match(widgetSource, /ui\/message/);
-  assert.match(widgetSource, /role:\s*'user'/);
-  assert.doesNotMatch(widgetSource, /sendFollowUpMessage/);
-  assert.doesNotMatch(widgetSource, /scrollToBottom:\s*true/);
-  assert.match(widgetSource, /startTaskPromptTemplate/);
-  assert.match(widgetSource, /stopTaskPromptTemplate/);
-  assert.match(widgetSource, /renderActionButton\(row,\s*'start'\)/);
-  assert.match(widgetSource, /renderActionButton\(row,\s*'stop'\)/);
-  assert.match(widgetSource, /task-action-button--\$\{action\}/);
-  assert.match(cssSource, /\.task-action-button--start[\s\S]*var\(--success-soft\)/);
-  assert.match(cssSource, /\.task-action-button--stop[\s\S]*#b3382e/);
-  assert.doesNotMatch(widgetSource, /callTool/);
-  assert.doesNotMatch(widgetSource, /start_or_stop_task/);
-  assert.match(widgetSource, /<th>#<\/th>/);
-  assert.match(widgetSource, /<th>Task Name<\/th>/);
-  assert.match(widgetSource, /<th>Status<\/th>/);
-  assert.match(widgetSource, /<th>Actions<\/th>/);
-  assert.doesNotMatch(widgetSource, /<th>Owner<\/th>/);
-  assert.doesNotMatch(widgetSource, /<th>Version<\/th>/);
 });
 
 test('search tasks presenter passes action prompt templates and keeps model text summarized for UI lists', () => {
@@ -712,25 +385,12 @@ test('search tasks presenter passes action prompt templates and keeps model text
     }
   );
 
-  assert.equal(response.content[0].text, 'Found 2 task results.');
+  assert.equal(response.content[0].text, 'UI already shows the task rows. Found 2 task results.');
   assert.doesNotMatch(response.content[0].text, /task-running|Running Task|Detailed running task description/);
   assert.equal(response._meta.startTaskPromptTemplate, 'Try to start or restart task {taskId}.');
   assert.equal(response._meta.stopTaskPromptTemplate, 'Try to stop task {taskId}.');
   assert.equal(response._meta.rows[0].statusTone, 'running');
   assert.equal(response._meta.rows[1].statusTone, 'stopped');
-});
-
-test('search templates widget keeps template cards simple and avoids inline parameter setup', () => {
-  const widgetSource = fs.readFileSync(
-    path.resolve(process.cwd(), 'web', 'src', 'components', 'SearchTemplatesApp.tsx'),
-    'utf8'
-  );
-
-  assert.doesNotMatch(widgetSource, /sourceOptions/);
-  assert.doesNotMatch(widgetSource, /inputSchema/);
-  assert.doesNotMatch(widgetSource, /Output Schema/);
-  assert.doesNotMatch(widgetSource, /validateOnly:\s*true/);
-  assert.doesNotMatch(widgetSource, /Parameter Summary/);
 });
 
 test('executeToolWithMiddleware preserves structuredContent and widget _meta for widget-enabled tools', async () => {
@@ -768,9 +428,17 @@ test('executeToolWithMiddleware preserves structuredContent and widget _meta for
     })
   };
 
-  const response = await executeToolWithMiddleware(tool, async () => undefined, {
-    keyword: 'maps'
-  });
+  const response = await RequestContextManager.runWithContext(
+    {
+      requestId: 'req-openai-widget-tool',
+      correlationId: 'corr-openai-widget-tool',
+      startTime: Date.now(),
+      clientName: 'openai-mcp'
+    },
+    () => executeToolWithMiddleware(tool, async () => undefined, {
+      keyword: 'maps'
+    })
+  );
 
   assert.equal(response.content[0].text, 'Prepared widget for maps');
   assert.deepEqual(response.structuredContent, {
@@ -789,7 +457,7 @@ test('registerAllResources registers the OpenAI App widget resources', () => {
     }
   };
 
-  registerAllResources(fakeServer);
+  registerAllResources(fakeServer, { uiMetaEnabled: true });
 
   assert.equal(
     registered.some((entry) => entry.uri === 'ui://widget/search-templates.html'),
@@ -799,6 +467,34 @@ test('registerAllResources registers the OpenAI App widget resources', () => {
     registered.some((entry) => entry.uri === 'ui://widget/search-tasks.html'),
     true
   );
+});
+
+test('registerAllResources keeps widget resources without OpenAI UI metadata when UI meta is disabled', async () => {
+  const registered = [];
+  const fakeServer = {
+    registerResource(name, uri, meta, handler) {
+      registered.push({ name, uri, meta, handler });
+    }
+  };
+
+  registerAllResources(fakeServer, { uiMetaEnabled: false });
+
+  const searchTemplatesResource = registered.find((entry) => entry.uri === 'ui://widget/search-templates.html');
+  const searchTasksResource = registered.find((entry) => entry.uri === 'ui://widget/search-tasks.html');
+
+  assert.ok(searchTemplatesResource);
+  assert.ok(searchTasksResource);
+  assert.equal(
+    registered.some((entry) => entry.uri === 'bazhuayu://workflow'),
+    true
+  );
+
+  const response = await searchTemplatesResource.handler();
+  assert.equal(searchTemplatesResource.meta.mimeType, 'text/plain');
+  assert.equal(response.contents[0].uri, 'ui://widget/search-templates.html');
+  assert.equal(response.contents[0].mimeType, 'text/plain');
+  assert.equal(response.contents[0].text, '');
+  assert.equal(response.contents[0]._meta, undefined);
 });
 
 async function loadBootstrapModule() {

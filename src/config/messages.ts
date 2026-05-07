@@ -178,7 +178,7 @@ const messages = {
           '',
           '[恢复步骤]:',
           '1. 用 `search_templates(keyword: "{websiteHint}")` 查找支持云端的替代模板。',
-          '2. 只保留 `runOn` 为 2 或 3 的模板。',
+          '2. 优先使用 `recommendedTemplateName`；否则选择 `executionMode` 包含 "Cloud" 的模板。',
           '3. 选中后用 `execute_task` 创建并启动新的云任务。',
           '',
           '[技术信息]:',
@@ -190,7 +190,7 @@ const messages = {
           '',
           '[不要这样做]:',
           '- 不要再次尝试在云端启动这个仅本地模板。',
-          '- 不要建议修改任务级别的 `runOn`。'
+          '- 不要建议修改任务级别的执行模式。'
         )
       },
       dataExportFailed: {
@@ -286,7 +286,7 @@ const messages = {
     searchTemplates: {
       title: '搜索模板',
       description:
-        '在调用 `execute_task` 前先找到合适的 八爪鱼 模板。必须且只能使用一种选择方式：`keyword` 用于搜索，`id` 用于精确模板 id，`slug` 用于精确别名。关键词模式只返回标准化模板信息和轻量级 source summary；精确查询会返回包含完整 `inputSchema` 的单个 `template`，若模板带有 source-backed 字段，还可能返回根级 `sourceOptions`。当存在 `outputSchema` 时，它描述了模板可采集的字段，也可作为后续模板链路的候选输入。优先返回支持云端的模板；仅本地模板会附带桌面端提示。',
+        '在调用 `execute_task` 前先找到合适的 八爪鱼 模板。必须且只能使用一种选择方式：`keyword` 用于搜索，`id` 用于精确模板 id，`slug` 用于精确别名。关键词模式返回 `recommendedTemplateName`、标准化的 `templates[]` 和轻量级 source summaries；每个模板包含 `templateName` 以及面向 AI 的 `executionMode`，例如 "Cloud"、"Local only" 或 "Cloud and local"。精确查询会返回包含完整 `inputSchema` 的单个 `template`，若模板带有 source-backed 字段，还可能返回根级 `sourceOptions`。当存在 `outputSchema` 时，它描述了模板可采集的字段，也可作为后续模板链路的候选输入。优先使用 `recommendedTemplateName`，或选择 `executionMode` 包含 "Cloud" 的模板；仅本地模板会附带桌面端提示。',
       useTemplatePromptTemplate: '我想要使用 [{templateName}] 模板来执行采集，请帮我准备需要传入的参数。'
     },
     exportData: {

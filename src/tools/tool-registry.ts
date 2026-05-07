@@ -18,6 +18,10 @@ import {
   createSuccessResponse
 } from './middleware.js';
 import { RequestContextManager } from '../utils/request-context.js';
+import type { UiClientPolicy } from '../widget-adapter/ui-client-policy.js';
+import { resolveUiClientPolicy } from '../widget-adapter/ui-client-policy.js';
+import { buildOpenAiToolRegistrationMeta } from '../widget-adapter/openai-widget-meta.js';
+import { Logger } from '../utils/logger.js';
 
 function isApiResponseLike(value: unknown): value is { success: boolean } {
   return (
@@ -43,12 +47,35 @@ interface ToolExecutionLogSink {
   failure(tool: ToolDefinition, error: unknown, extraMeta?: Record<string, unknown>): Promise<void>;
 }
 
+function isCallToolResultLike(value: unknown): value is { content: unknown[]; isError?: boolean } {
+  return (
+    !!value &&
+    typeof value === 'object' &&
+    Array.isArray((value as Record<string, unknown>).content)
+  );
+}
+
+export interface ToolRegistrationOptions {
+  uiPolicy?: UiClientPolicy;
+  /** @deprecated Use uiPolicy. */
+  uiMetaEnabled?: boolean;
+}
+
 const NOOP_TOOL_LOG_SINK: ToolExecutionLogSink = {
   start: async () => {},
   success: async () => {},
   authRejected: async () => {},
   failure: async () => {}
 };
+
+function debugIfLoggingEnabled(message: string, meta: Record<string, unknown>): void {
+  const logger = Logger.getInstance();
+  if (logger.transports.length === 0) {
+    return;
+  }
+
+  logger.debug(message, { meta });
+}
 
 class TaskOperationAuthError extends Error {
   constructor(readonly authError: Awaited<ReturnType<typeof checkAuth>>) {
@@ -57,7 +84,7 @@ class TaskOperationAuthError extends Error {
   }
 }
 
-function getToolConfig(tool: ToolDefinition) {
+function getToolConfig(tool: ToolDefinition, options: ToolRegistrationOptions = {}) {
   const config: any = {
     title: tool.title,
     description: tool.description,
@@ -65,19 +92,18 @@ function getToolConfig(tool: ToolDefinition) {
     annotations: tool.annotations
   };
 
-  if (tool.uiBinding) {
-    const outputTemplate = tool.uiBinding.outputTemplate ?? tool.uiBinding.resourceUri;
-    config._meta = {
-      ui: {
-        resourceUri: outputTemplate
-      },
-      'openai/outputTemplate': outputTemplate,
-      'openai/widgetAccessible': tool.uiBinding.widgetAccessible ?? false,
-      'openai/toolInvocation/invoking':
-        tool.uiBinding.invokingText ?? `${tool.title} is loading...`,
-      'openai/toolInvocation/invoked':
-        tool.uiBinding.invokedText ?? `${tool.title} is ready.`
-    };
+  const allowToolRegistrationMeta =
+    options.uiPolicy?.allowToolRegistrationMeta ?? options.uiMetaEnabled === true;
+
+  if (tool.uiBinding && allowToolRegistrationMeta) {
+    config._meta = buildOpenAiToolRegistrationMeta({
+      title: tool.title,
+      resourceUri: tool.uiBinding.resourceUri,
+      outputTemplate: tool.uiBinding.outputTemplate,
+      widgetAccessible: tool.uiBinding.widgetAccessible,
+      invokingText: tool.uiBinding.invokingText,
+      invokedText: tool.uiBinding.invokedText
+    });
   };
 
   return config;
@@ -166,12 +192,26 @@ export async function executeToolWithMiddleware<TInput, TOutput>(
 
       // Execute the actual handler
       const result = await tool.handler(validInput, getApi);
+      const uiBinding = tool.uiBinding;
+      const context = RequestContextManager.getContext();
+      const uiPolicy = context?.uiPolicy ?? resolveUiClientPolicy({
+        clientName: context?.clientName,
+        clientVersion: context?.clientVersion
+      });
+      const shouldUseUiPresenter = Boolean(uiBinding && uiPolicy.allowToolResultPresenter);
+      if (uiBinding) {
+        debugIfLoggingEnabled('Tool UI presenter eligibility', {
+          toolName: tool.name,
+          clientName: context?.clientName,
+          clientVersion: context?.clientVersion,
+          widgetMode: uiPolicy.widgetMode,
+          allowToolResultPresenter: uiPolicy.allowToolResultPresenter
+        });
+      }
       const presentedResult =
-        tool.uiBinding && !isApiResponseLike(result) && !('content' in (result as Record<string, unknown>))
-          ? tool.uiBinding.presenter(result)
-          : tool.uiBinding && isApiResponseLike(result)
-            ? tool.uiBinding.presenter(result as TOutput)
-            : result;
+        shouldUseUiPresenter && !isCallToolResultLike(result)
+          ? uiBinding!.presenter(result as TOutput)
+          : result;
 
       if (isApiResponseLike(presentedResult)) {
         if (presentedResult.success) {
@@ -331,11 +371,12 @@ function createWrappedTaskHandler<TInput>(
 export function registerTool(
   server: McpServer,
   tool: ToolDefinition,
-  getApi: ApiFactory
+  getApi: ApiFactory,
+  options: ToolRegistrationOptions = {}
 ): void {
   server.registerTool(
     tool.name,
-    getToolConfig(tool),
+    getToolConfig(tool, options),
     createWrappedHandler(server, tool, getApi)
   );
 }
@@ -343,7 +384,8 @@ export function registerTool(
 export function registerToolTask(
   server: McpServer,
   tool: ToolDefinition,
-  getApi: ApiFactory
+  getApi: ApiFactory,
+  options: ToolRegistrationOptions = {}
 ): void {
   if (!tool.taskRegistration) {
     throw new Error(`Tool ${tool.name} is missing task registration metadata.`);
@@ -352,7 +394,7 @@ export function registerToolTask(
   server.experimental.tasks.registerToolTask(
     tool.name,
     {
-      ...getToolConfig(tool),
+      ...getToolConfig(tool, options),
       execution: tool.taskRegistration.execution
     },
     createWrappedTaskHandler(server, tool, getApi, tool.taskRegistration)
@@ -366,16 +408,17 @@ export function registerToolTask(
 export function registerAllTools(
   server: McpServer,
   tools: ToolDefinition[],
-  getApi: ApiFactory
+  getApi: ApiFactory,
+  options: ToolRegistrationOptions = {}
 ): void {
   const taskEnabled = AppConfig.getTaskConfig().enabled;
   for (const tool of tools) {
     if (tool.taskRegistration && taskEnabled) {
-      registerToolTask(server, tool, getApi);
+      registerToolTask(server, tool, getApi, options);
       continue;
     }
 
-    registerTool(server, tool, getApi);
+    registerTool(server, tool, getApi, options);
   }
 }
 

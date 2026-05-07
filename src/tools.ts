@@ -16,11 +16,22 @@ import {
   createDefaultDirectToolLogSink,
   executeToolWithMiddleware,
   registerAllTools as registerAllToolsInternal,
-  type ApiFactory as RegistryApiFactory
+  type ApiFactory as RegistryApiFactory,
+  type ToolRegistrationOptions
 } from './tools/tool-registry.js';
 import { allTools } from './tools/tool-definitions.js';
 import type { ToolDefinition } from './tools/tool-definition.js';
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
+import type { UiClientPolicy } from './widget-adapter/ui-client-policy.js';
+import { resolveUiClientPolicy } from './widget-adapter/ui-client-policy.js';
+
+export interface RegisterAllToolsOptions {
+  clientName?: string;
+  clientVersion?: string;
+  uiPolicy?: UiClientPolicy;
+  /** @deprecated Use uiPolicy. */
+  uiMetaEnabled?: boolean;
+}
 
 function createApiFactory(
   userInfo?: UserInfo,
@@ -66,12 +77,26 @@ export const registerAllTools = (
   userInfo?: UserInfo,
   authHeader?: string,
   apiKey?: string,
-  selectedTools: ToolDefinition[] = allTools
+  selectedTools: ToolDefinition[] = allTools,
+  options: RegisterAllToolsOptions = {}
 ): void => {
   const getApi = createApiFactory(userInfo, authHeader, apiKey);
+  const uiPolicy = options.uiPolicy ?? (
+    options.uiMetaEnabled !== undefined
+      ? resolveUiClientPolicy({
+          clientName: options.uiMetaEnabled ? 'openai-mcp' : undefined
+        })
+      : resolveUiClientPolicy({
+          clientName: options.clientName,
+          clientVersion: options.clientVersion
+        })
+  );
+  const registryOptions: ToolRegistrationOptions = {
+    uiPolicy
+  };
 
   // Register all tools using the factory function
-  registerAllToolsInternal(server, selectedTools, getApi);
+  registerAllToolsInternal(server, selectedTools, getApi, registryOptions);
 };
 
 export async function executeToolDirect(
@@ -82,6 +107,15 @@ export async function executeToolDirect(
   apiKey?: string,
 ): Promise<CallToolResult> {
   const getApi = createApiFactory(userInfo, authHeader, apiKey);
+  const context = RequestContextManager.getContext();
+  if (context && !context.uiPolicy) {
+    RequestContextManager.updateContext({
+      uiPolicy: resolveUiClientPolicy({
+        clientName: context.clientName,
+        clientVersion: context.clientVersion
+      })
+    });
+  }
   return await executeToolWithMiddleware(tool, getApi, args, {
     logSink: createDefaultDirectToolLogSink()
   }) as CallToolResult;

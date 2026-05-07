@@ -2,33 +2,21 @@ import { useEffect, useState } from 'react';
 
 export type TemplateWidgetPayload = {
   isLoading?: boolean;
-  selectedTemplateRef?: {
-    templateId?: number;
-    templateName?: string;
-    displayName?: string;
-  } | null;
-  generatedParameterSummary?: string;
-  generatedExecuteTaskSuggestion?: string;
-  nextStepHint?: string;
   useTemplatePromptTemplate?: string;
   cards?: Array<{
     templateName?: string;
     displayName?: string;
     shortDescription?: string;
     imageUrl?: string;
-    selectable?: boolean;
-    selectionMode?: 'execute_task' | 'local_only';
     templateRef?: {
       templateId?: number;
       templateName?: string;
       displayName?: string;
     } | null;
-    kindLabels?: string[];
     priceLabel?: string;
     popularityLikes?: number;
     lastModifiedLabel?: string;
-    runOnLabel?: string;
-    supportsCloudScraping?: boolean;
+    executionMode?: string;
     note?: string;
     iconKey?: string;
     downloadUrl?: string;
@@ -47,19 +35,7 @@ export type TemplateWidgetPayload = {
     total?: number;
   };
   structuredContent?: {
-    recommendedTemplate?: {
-      displayName?: string;
-      templateName?: string;
-      reason?: string;
-    } | null;
-    selectedTemplateRef?: {
-      templateId?: number;
-      templateName?: string;
-      displayName?: string;
-    } | null;
-    generatedParameterSummary?: string;
-    generatedExecuteTaskSuggestion?: string;
-    nextStepHint?: string;
+    recommendedTemplateName?: string | null;
   };
 };
 
@@ -68,17 +44,13 @@ type TemplateStructuredTemplate = {
   displayName?: string;
   shortDescription?: string;
   imageUrl?: string;
-  selectable?: boolean;
-  selectionMode?: 'execute_task' | 'local_only';
   templateRef?: {
     templateId?: number;
     templateName?: string;
     displayName?: string;
   };
-  supportsCloudScraping?: boolean;
-  runOnLabel?: string;
+  executionMode?: string;
   popularityLikes?: number;
-  kindLabels?: string[];
   priceLabel?: string;
   lastModifiedLabel?: string;
   downloadUrl?: string;
@@ -133,10 +105,6 @@ const SET_GLOBALS_EVENT_TYPE = 'openai:set_globals';
 function createTemplateWaitingState(): TemplateWidgetPayload {
   return {
     isLoading: true,
-    selectedTemplateRef: null,
-    generatedParameterSummary: '',
-    generatedExecuteTaskSuggestion: '',
-    nextStepHint: '',
     cards: [],
     banner: null,
     pagination: {
@@ -145,7 +113,7 @@ function createTemplateWaitingState(): TemplateWidgetPayload {
       total: 0
     },
     structuredContent: {
-      recommendedTemplate: null
+      recommendedTemplateName: null
     }
   };
 }
@@ -184,11 +152,8 @@ function readToolResponseMetadata(): unknown {
   return window.openai?.toolResponseMetadata ?? window.openai?.state?.toolResponseMetadata;
 }
 
-function inferTemplateIcon(
-  displayName: string | undefined,
-  kindLabels: string[] | undefined
-): string {
-  const haystack = `${displayName || ''} ${(kindLabels || []).join(' ')}`.toLowerCase();
+function inferTemplateIcon(displayName: string | undefined, templateName: string | undefined): string {
+  const haystack = `${displayName || ''} ${templateName || ''}`.toLowerCase();
 
   if (haystack.includes('google')) return 'search-engine';
   if (haystack.includes('map')) return 'maps';
@@ -225,38 +190,18 @@ function normalizeTemplateRef(value: unknown):
     : null;
 }
 
-function pickTextField(
-  primary: Record<string, unknown> | undefined,
-  fallback: Record<string, unknown> | undefined,
-  key: 'generatedParameterSummary' | 'generatedExecuteTaskSuggestion' | 'nextStepHint'
-): string {
-  if (primary && key in primary) {
-    return normalizeText(primary[key]);
-  }
-
-  if (fallback && key in fallback) {
-    return normalizeText(fallback[key]);
-  }
-
-  return '';
-}
-
 function toTemplateCard(template: TemplateStructuredTemplate) {
   return {
     templateName: template.templateName,
     displayName: template.displayName || template.templateName,
     shortDescription: template.shortDescription,
     imageUrl: template.imageUrl,
-    selectable: template.selectable,
-    selectionMode: template.selectionMode,
     templateRef: normalizeTemplateRef(template.templateRef),
-    supportsCloudScraping: template.supportsCloudScraping,
-    runOnLabel: template.runOnLabel,
+    executionMode: template.executionMode,
     popularityLikes: template.popularityLikes,
-    kindLabels: template.kindLabels ?? [],
     priceLabel: template.priceLabel,
     lastModifiedLabel: template.lastModifiedLabel,
-    iconKey: inferTemplateIcon(template.displayName || template.templateName, template.kindLabels),
+    iconKey: inferTemplateIcon(template.displayName || template.templateName, template.templateName),
     downloadUrl: template.downloadUrl,
     sourceOptions: template.sourceOptions,
     inputSchema: template.inputSchema,
@@ -264,46 +209,14 @@ function toTemplateCard(template: TemplateStructuredTemplate) {
   };
 }
 
-function normalizeText(value: unknown): string {
-  return typeof value === 'string' ? value : '';
-}
-
-function normalizeRecommendedTemplate(
+function normalizeRecommendedTemplateName(
   structuredContent: Record<string, unknown> | undefined
 ): TemplateWidgetPayload['structuredContent'] {
   return {
-    recommendedTemplate: structuredContent && isRecord(structuredContent.recommendedTemplate)
-      ? {
-        displayName:
-          typeof structuredContent.recommendedTemplate.displayName === 'string'
-            ? structuredContent.recommendedTemplate.displayName
-            : undefined,
-        templateName:
-          typeof structuredContent.recommendedTemplate.templateName === 'string'
-            ? structuredContent.recommendedTemplate.templateName
-            : undefined,
-        reason:
-          typeof structuredContent.recommendedTemplate.reason === 'string'
-            ? structuredContent.recommendedTemplate.reason
-            : undefined
-      }
-      : null
-  };
-}
-
-function pickTemplateSelectionFields(
-  primary: Record<string, unknown> | undefined,
-  fallback?: Record<string, unknown>
-) {
-  const selectedTemplateRef =
-    normalizeTemplateRef(primary?.selectedTemplateRef) ??
-    normalizeTemplateRef(fallback?.selectedTemplateRef);
-
-  return {
-    selectedTemplateRef,
-    generatedParameterSummary: pickTextField(primary, fallback, 'generatedParameterSummary'),
-    generatedExecuteTaskSuggestion: pickTextField(primary, fallback, 'generatedExecuteTaskSuggestion'),
-    nextStepHint: pickTextField(primary, fallback, 'nextStepHint')
+    recommendedTemplateName:
+      typeof structuredContent?.recommendedTemplateName === 'string'
+        ? structuredContent.recommendedTemplateName
+        : null
   };
 }
 
@@ -343,35 +256,15 @@ function createDegradedTemplatePayload(
   structuredContent: Record<string, unknown> | undefined,
   meta: Record<string, unknown> | undefined
 ): TemplateWidgetPayload {
-  const selection = pickTemplateSelectionFields(structuredContent, payload);
-
   return {
     isLoading: false,
-    selectedTemplateRef: selection.selectedTemplateRef,
-    generatedParameterSummary: selection.generatedParameterSummary,
-    generatedExecuteTaskSuggestion: selection.generatedExecuteTaskSuggestion,
-    nextStepHint: selection.nextStepHint,
     ...(typeof meta?.useTemplatePromptTemplate === 'string'
       ? { useTemplatePromptTemplate: meta.useTemplatePromptTemplate }
       : {}),
     cards: [],
     banner: normalizeBanner(meta?.banner),
     pagination: normalizePagination(meta?.pagination, 0),
-    structuredContent: {
-      ...normalizeRecommendedTemplate(structuredContent),
-      ...(structuredContent && isRecord(structuredContent.selectedTemplateRef)
-        ? { selectedTemplateRef: structuredContent.selectedTemplateRef as TemplateWidgetPayload['selectedTemplateRef'] }
-        : {}),
-      ...(typeof structuredContent?.generatedParameterSummary === 'string'
-        ? { generatedParameterSummary: structuredContent.generatedParameterSummary }
-        : {}),
-      ...(typeof structuredContent?.generatedExecuteTaskSuggestion === 'string'
-        ? { generatedExecuteTaskSuggestion: structuredContent.generatedExecuteTaskSuggestion }
-        : {}),
-      ...(typeof structuredContent?.nextStepHint === 'string'
-        ? { nextStepHint: structuredContent.nextStepHint }
-        : {})
-    }
+    structuredContent: normalizeRecommendedTemplateName(structuredContent)
   };
 }
 
@@ -387,14 +280,8 @@ function fromStructuredTemplatePayload(
     .filter((item): item is TemplateStructuredTemplate => isRecord(item))
     .map((template) => toTemplateCard(template));
 
-  const selection = pickTemplateSelectionFields(payload);
-
   return {
     isLoading: false,
-    selectedTemplateRef: selection.selectedTemplateRef,
-    generatedParameterSummary: selection.generatedParameterSummary,
-    generatedExecuteTaskSuggestion: selection.generatedExecuteTaskSuggestion,
-    nextStepHint: selection.nextStepHint,
     cards,
     pagination: {
       page: typeof payload.page === 'number' ? payload.page : 1,
@@ -403,7 +290,7 @@ function fromStructuredTemplatePayload(
         ? payload.totalMatchingTemplates
         : cards.length
     },
-    structuredContent: normalizeRecommendedTemplate(payload)
+    structuredContent: normalizeRecommendedTemplateName(payload)
   };
 }
 
@@ -425,21 +312,15 @@ function fromMetaTemplatePayload(
 
   const pagination = normalizePagination(meta.pagination, cards.length);
   const banner = normalizeBanner(meta.banner);
-  const selection = pickTemplateSelectionFields(meta, structuredContent);
-
   return {
     isLoading: false,
-    selectedTemplateRef: selection.selectedTemplateRef,
-    generatedParameterSummary: selection.generatedParameterSummary,
-    generatedExecuteTaskSuggestion: selection.generatedExecuteTaskSuggestion,
-    nextStepHint: selection.nextStepHint,
     ...(typeof meta.useTemplatePromptTemplate === 'string'
       ? { useTemplatePromptTemplate: meta.useTemplatePromptTemplate }
       : {}),
     cards,
     banner,
     pagination,
-    structuredContent: normalizeRecommendedTemplate(structuredContent)
+    structuredContent: normalizeRecommendedTemplateName(structuredContent)
   };
 }
 

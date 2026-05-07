@@ -1,5 +1,6 @@
 import type { CallToolResult } from '@modelcontextprotocol/sdk/types.js';
 import type { ToolUiBinding } from './tool-ui-contract.js';
+import { buildOpenAiWidgetResultMeta } from './openai-widget-meta.js';
 
 function normalizeStructuredContent(value: unknown): Record<string, unknown> | undefined {
   if (value === undefined) {
@@ -15,7 +16,7 @@ function normalizeStructuredContent(value: unknown): Record<string, unknown> | u
   };
 }
 
-export function createWidgetToolResult(input: {
+export function createOpenAiWidgetToolResult(input: {
   binding: Pick<ToolUiBinding, 'resourceUri' | 'outputTemplate' | 'widgetAccessible'>;
   text: string;
   structuredContent?: unknown;
@@ -34,15 +35,11 @@ export function createWidgetToolResult(input: {
     ...(normalizeStructuredContent(input.structuredContent) !== undefined
       ? { structuredContent: normalizeStructuredContent(input.structuredContent) }
       : {}),
-    _meta: {
-      ui: {
-        resourceUri
-      },
-      'openai/outputTemplate': resourceUri,
-      'openai/resultCanProduceWidget': true,
-      'openai/widgetAccessible': input.binding.widgetAccessible ?? false,
-      ...(input.widgetData ?? {})
-    },
+    _meta: buildOpenAiWidgetResultMeta({
+      resourceUri,
+      widgetAccessible: input.binding.widgetAccessible,
+      widgetData: input.widgetData
+    }),
     ...(input.isError ? { isError: true } : {})
   };
 }

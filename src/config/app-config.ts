@@ -53,6 +53,12 @@ export interface TaskConfig {
   credentialHandleTtlMs: number;
 }
 
+export interface UiConfig {
+  widgetClientAllowList: string[];
+  /** @deprecated Use widgetClientAllowList. Kept as a compatibility alias for older callers. */
+  metaClientAllowList: string[];
+}
+
 export interface RedisConfig {
   enabled: boolean;
   host: string;
@@ -72,6 +78,7 @@ export interface AppConfiguration {
   security: SecurityConfig;
   logging: LoggingConfig;
   tasks: TaskConfig;
+  ui: UiConfig;
   redis: RedisConfig;
   development: boolean;
 }
@@ -172,6 +179,7 @@ export class AppConfig {
         lockTtlMs: this.parseInteger(process.env.EXECUTION_TASK_LOCK_TTL_SECONDS, 300, 1, 86400) * 1000,
         credentialHandleTtlMs: this.parseInteger(process.env.EXECUTION_TASK_CREDENTIAL_HANDLE_TTL_SECONDS, 300, 1, 86400) * 1000
       },
+      ui: this.loadUiConfig(),
       redis: {
         enabled: this.parseBoolean(process.env.REDIS_ENABLED, false),
         host: process.env.REDIS_HOST || 'localhost',
@@ -396,6 +404,28 @@ export class AppConfig {
     return AppConfig.getConfig().tasks;
   }
 
+  private static loadUiConfig(): UiConfig {
+    const rawWidgetAllowList = process.env.UI_WIDGET_CLIENT_ALLOW_LIST;
+    const rawLegacyMetaAllowList = process.env.UI_META_CLIENT_ALLOW_LIST;
+    const widgetClientAllowList = this.parseStringArray(
+      rawWidgetAllowList ?? rawLegacyMetaAllowList,
+      ['openai-mcp']
+    );
+
+    if (rawWidgetAllowList === undefined && rawLegacyMetaAllowList !== undefined) {
+      AppConfig.warn('UI_META_CLIENT_ALLOW_LIST is deprecated; use UI_WIDGET_CLIENT_ALLOW_LIST instead.');
+    }
+
+    return {
+      widgetClientAllowList,
+      metaClientAllowList: widgetClientAllowList
+    };
+  }
+
+  static getUiConfig(): UiConfig {
+    return AppConfig.getConfig().ui;
+  }
+
   static getRedisConfig(): RedisConfig {
     const config = AppConfig.getConfig().redis;
     // Ensure sessionTTL has a valid default (for backward compatibility with cached config)
@@ -439,6 +469,7 @@ export class AppConfig {
       api: config.api,
       http: { ...config.http, userAgent: config.http.userAgent },
       tasks: config.tasks,
+      ui: config.ui,
       security: {
         allowedOrigins: config.security.allowedOrigins,
         trustProxy: config.security.trustProxy

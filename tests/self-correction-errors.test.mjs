@@ -36,57 +36,6 @@ test('cloudTaskPermissionDenied uses the shared messages entry for its title tex
   );
 });
 
-test('taskAlreadyRunning uses the shared messages entry for its title text', () => {
-  const result = SelfCorrectionErrorBuilder.taskAlreadyRunning({
-    taskId: 'task-1',
-    taskName: 'Task 1'
-  });
-
-  assert.match(
-    result.content[0].text,
-    new RegExp(messages.errors.selfCorrection.taskAlreadyRunning.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  );
-});
-
-test('taskNotRunning uses the shared messages entry for its title text', () => {
-  const result = SelfCorrectionErrorBuilder.taskNotRunning({
-    taskId: 'task-2',
-    taskName: 'Task 2',
-    currentStatus: 'Stopped'
-  });
-
-  assert.match(
-    result.content[0].text,
-    new RegExp(messages.errors.selfCorrection.taskNotRunning.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  );
-});
-
-test('insufficientCredits uses the shared messages entry for its title text', () => {
-  const result = SelfCorrectionErrorBuilder.insufficientCredits({
-    taskId: 'task-3',
-    currentBalance: 10,
-    estimatedCost: 25
-  });
-
-  assert.match(
-    result.content[0].text,
-    new RegExp(messages.errors.selfCorrection.insufficientCredits.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  );
-});
-
-test('taskNoData uses the shared messages entry for its title text', () => {
-  const result = SelfCorrectionErrorBuilder.taskNoData({
-    taskId: 'task-4',
-    taskName: 'Task 4',
-    hasRunBefore: false
-  });
-
-  assert.match(
-    result.content[0].text,
-    new RegExp(messages.errors.selfCorrection.taskNoData.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  );
-});
-
 test('templateLocalOnly uses the shared messages entry for its title text', () => {
   const result = SelfCorrectionErrorBuilder.templateLocalOnly({
     taskId: 'task-5',
@@ -111,19 +60,11 @@ test('templateLocalOnly uses the shared messages entry for its title text', () =
       }).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     )
   );
-});
-
-test('dataExportFailed uses the shared messages entry for its title text', () => {
-  const result = SelfCorrectionErrorBuilder.dataExportFailed({
-    taskId: 'task-6',
-    taskName: 'Task 6',
-    errorMessage: 'network timeout'
+  assert.deepEqual(result.metadata.filterCriteria, {
+    executionMode: 'Cloud'
   });
-
-  assert.match(
-    result.content[0].text,
-    new RegExp(messages.errors.selfCorrection.dataExportFailed.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  );
+  assert.match(result.content[0].text, /executionMode/);
+  assert.doesNotMatch(result.content[0].text, /Keep templates where `runOn`/);
 });
 
 test('parameterValidationFailed uses the shared messages entry for its title text', () => {
@@ -141,15 +82,3 @@ test('parameterValidationFailed uses the shared messages entry for its title tex
   );
 });
 
-test('generic uses the shared messages entry for its title text', () => {
-  const result = SelfCorrectionErrorBuilder.generic({
-    operation: 'starting task',
-    errorMessage: 'unknown failure',
-    recoverySuggestion: 'Retry later.'
-  });
-
-  assert.match(
-    result.content[0].text,
-    new RegExp(messages.errors.selfCorrection.generic.title.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  );
-});

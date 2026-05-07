@@ -20,6 +20,8 @@ import {
   resolveToolSelection,
   type ToolSelectionState
 } from './utils/tool-selection.js';
+import type { UiClientPolicy } from './widget-adapter/ui-client-policy.js';
+import { resolveUiClientPolicy } from './widget-adapter/ui-client-policy.js';
 
 const PUBLIC_TOOL_NAMES = allTools.map((tool) => tool.name);
 
@@ -163,6 +165,7 @@ async function ensureSessionContext(
   isRecovered: boolean;
   clientName?: string;
   clientVersion?: string;
+  uiPolicy: UiClientPolicy;
 } | null> {
   if (!sessionId) return null;
 
@@ -204,7 +207,11 @@ async function ensureSessionContext(
       toolSelection: createDefaultToolSelection(PUBLIC_TOOL_NAMES),
       isRecovered: false,
       clientName: localMetadata?.clientInfo?.name,
-      clientVersion: localMetadata?.clientInfo?.version
+      clientVersion: localMetadata?.clientInfo?.version,
+      uiPolicy: resolveUiClientPolicy({
+        clientName: localMetadata?.clientInfo?.name,
+        clientVersion: localMetadata?.clientInfo?.version
+      })
     };
   }
 
@@ -235,8 +242,14 @@ async function ensureSessionContext(
             }
           : undefined
       );
+      const uiPolicy = resolveUiClientPolicy({
+        clientName: metadata.clientInfo?.name,
+        clientVersion: metadata.clientInfo?.version
+      });
       // Pass apiKey to createMcpServer for API Key authentication
-      const server = createMcpServer(recoveredUserInfo, authHeaderForJwt, apiKey, selectedTools);
+      const server = createMcpServer(recoveredUserInfo, authHeaderForJwt, apiKey, selectedTools, {
+        uiPolicy
+      });
       await server.connect(transport);
       // Critical: onsessioninitialized is only called when processing initialize.
       // During recovery we never process initialize, so we must register manually.
@@ -264,7 +277,8 @@ async function ensureSessionContext(
         toolSelection,
         isRecovered: true,
         clientName: metadata.clientInfo?.name,
-        clientVersion: metadata.clientInfo?.version
+        clientVersion: metadata.clientInfo?.version,
+        uiPolicy
       };
     } catch (error) {
       Logger.logError(`[Session] ✗ Failed to re-initialize recovered session ${sessionId}`, error as Error);
@@ -292,6 +306,7 @@ export const handleMcpPost = async (req: Request, res: Response): Promise<void> 
   let sessionToolSelection = createDefaultToolSelection(PUBLIC_TOOL_NAMES);
   let sessionClientName: string | undefined;
   let sessionClientVersion: string | undefined;
+  let sessionUiPolicy: UiClientPolicy | undefined;
 
   // Check for API Key authentication first (priority over JWT)
   if (apiKey) {
@@ -318,6 +333,7 @@ export const handleMcpPost = async (req: Request, res: Response): Promise<void> 
       sessionToolSelection = sessionContext.toolSelection;
       sessionClientName = sessionContext.clientName;
       sessionClientVersion = sessionContext.clientVersion;
+      sessionUiPolicy = sessionContext.uiPolicy;
     }
   } else {
     // JWT authentication mode: decode only and delegate verification downstream.
@@ -326,6 +342,7 @@ export const handleMcpPost = async (req: Request, res: Response): Promise<void> 
     sessionToolSelection = sessionContext?.toolSelection ?? sessionToolSelection;
     sessionClientName = sessionContext?.clientName;
     sessionClientVersion = sessionContext?.clientVersion;
+    sessionUiPolicy = sessionContext?.uiPolicy;
   }
 
   // If authentication is required and credentials are missing, return 401
@@ -416,6 +433,10 @@ export const handleMcpPost = async (req: Request, res: Response): Promise<void> 
       sessionId,
       clientName: sessionClientName,
       clientVersion: sessionClientVersion,
+      uiPolicy: sessionUiPolicy ?? resolveUiClientPolicy({
+        clientName: sessionClientName,
+        clientVersion: sessionClientVersion
+      }),
       method: req.method,
       url: req.originalUrl || req.url
     });
@@ -465,19 +486,36 @@ export const handleMcpPost = async (req: Request, res: Response): Promise<void> 
       } else if (!sessionId && isInitializeRequest(req.body)) {
         // New initialization request
         const transport = transportManager.createTransport();
+        const clientInfo = req.body?.params?.clientInfo;
+        const clientName = clientInfo?.name;
+        const clientVersion = clientInfo?.version;
+        const uiPolicy = resolveUiClientPolicy({ clientName, clientVersion });
+        RequestContextManager.updateContext({
+          clientName,
+          clientVersion,
+          uiPolicy
+        });
+        Logger.debug('MCP client UI metadata eligibility', {
+          meta: {
+            clientName,
+            clientVersion,
+            widgetMode: uiPolicy.widgetMode,
+            allowToolRegistrationMeta: uiPolicy.allowToolRegistrationMeta,
+            allowToolResultPresenter: uiPolicy.allowToolResultPresenter
+          }
+        });
 
         // Connect the transport to the MCP server with user context, auth header and apiKey
-        const server = createMcpServer(userInfo, authHeaderForJwt, apiKey, selectedTools);
+        const server = createMcpServer(userInfo, authHeaderForJwt, apiKey, selectedTools, {
+          uiPolicy
+        });
         await server.connect(transport);
 
         // Process the request first - this will trigger session initialization
         await transport.handleRequest(req, res, req.body);
 
-        // Extract clientInfo from initialize request params
-        const clientInfo = req.body?.params?.clientInfo;
+        // Extract client capabilities from initialize request params
         const clientCapabilities = req.body?.params?.capabilities;
-        const clientName = clientInfo?.name;
-        const clientVersion = clientInfo?.version;
 
         // Save session metadata to Redis for distributed support (token is NOT stored)
         // Note: transport.sessionId is only available after handleRequest processes the initialize message
@@ -486,7 +524,8 @@ export const handleMcpPost = async (req: Request, res: Response): Promise<void> 
           RequestContextManager.updateContext({
             sessionId: newSessionId,
             clientName,
-            clientVersion
+            clientVersion,
+            uiPolicy
           });
           await SessionService.saveSession(newSessionId, {
             userId: userInfo.id,
@@ -561,6 +600,7 @@ export const handleMcpGet = async (req: Request, res: Response): Promise<void> =
       sessionId,
       clientName: sessionContext.clientName,
       clientVersion: sessionContext.clientVersion,
+      uiPolicy: sessionContext.uiPolicy,
       method: req.method,
       url: req.originalUrl || req.url
     });
@@ -610,6 +650,7 @@ export const handleMcpDelete = async (req: Request, res: Response): Promise<void
       sessionId,
       clientName: sessionContext.clientName,
       clientVersion: sessionContext.clientVersion,
+      uiPolicy: sessionContext.uiPolicy,
       method: req.method,
       url: req.originalUrl || req.url
     });

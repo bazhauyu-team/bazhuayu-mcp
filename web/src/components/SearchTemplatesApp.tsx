@@ -25,14 +25,14 @@ function priceTone(priceLabel: string | undefined): 'free' | 'paid' {
   return /no extra cost/i.test(priceLabel) ? 'free' : 'paid';
 }
 
-function supportsLocalRun(runOnLabel: string | undefined): boolean {
-  const label = runOnLabel || '';
+function supportsLocalRun(executionMode: string | undefined): boolean {
+  const label = executionMode || '';
   return /local|本地/i.test(label);
 }
 
-function supportsCloudRun(runOnLabel: string | undefined, cloudFlag: boolean | undefined): boolean {
-  const label = runOnLabel || '';
-  return cloudFlag === true || /cloud|云/i.test(label);
+function supportsCloudRun(executionMode: string | undefined): boolean {
+  const label = executionMode || '';
+  return /cloud|云/i.test(label);
 }
 
 function getTemplateGridClass(cards: TemplateCard[]): string {
@@ -50,7 +50,7 @@ function getTemplateGridClass(cards: TemplateCard[]): string {
 export function SearchTemplatesApp() {
   const payload = useTemplateWidgetPayload();
   const cards = payload.cards ?? [];
-  const recommended = payload.structuredContent?.recommendedTemplate;
+  const recommendedTemplateName = payload.structuredContent?.recommendedTemplateName;
   const total = payload.pagination?.total ?? cards.length;
 
   if (payload.isLoading) {
@@ -79,11 +79,11 @@ export function SearchTemplatesApp() {
         </div>
       </section>
 
-      {recommended ? (
+      {recommendedTemplateName ? (
         <section className="template-inline-note" aria-label="Recommended template">
           <span className="chip chip-accent">Recommended</span>
-          <strong>{recommended.displayName || recommended.templateName}</strong>
-          <p>{recommended.reason || 'Best fit from the current search results.'}</p>
+          <strong>{recommendedTemplateName}</strong>
+          <p>Best fit from the current search results.</p>
         </section>
       ) : null}
 
@@ -110,10 +110,10 @@ export function SearchTemplatesApp() {
                   <h2>{card.displayName}</h2>
                   <div
                     className="template-run-icons"
-                    aria-label={card.selectionMode === 'local_only' ? 'Local-only template' : `Run mode: ${card.runOnLabel || 'Unknown'}`}
-                    title={card.runOnLabel || 'Unknown run mode'}
+                    aria-label={`Execution mode: ${card.executionMode || 'Unknown'}`}
+                    title={card.executionMode || 'Unknown execution mode'}
                   >
-                    {supportsLocalRun(card.runOnLabel) ? (
+                    {supportsLocalRun(card.executionMode) ? (
                       <span className="template-run-icon template-run-icon--local" aria-label="Local run">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                           <rect x="4" y="5" width="16" height="11" rx="2" />
@@ -121,7 +121,7 @@ export function SearchTemplatesApp() {
                         </svg>
                       </span>
                     ) : null}
-                    {supportsCloudRun(card.runOnLabel, card.supportsCloudScraping) ? (
+                    {supportsCloudRun(card.executionMode) ? (
                       <span className="template-run-icon template-run-icon--cloud" aria-label="Cloud run">
                         <svg viewBox="0 0 24 24" aria-hidden="true">
                           <path d="M7 18h10a4 4 0 0 0 .6-7.95A6 6 0 0 0 6.35 8.4 4.8 4.8 0 0 0 7 18Z" />

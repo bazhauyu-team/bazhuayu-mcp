@@ -9,6 +9,8 @@ import {
   createExecutionTaskStore,
   type ExecutionTaskStore
 } from './tasks/execution-task-store.js';
+import type { UiClientPolicy } from './widget-adapter/ui-client-policy.js';
+import { resolveUiClientPolicy } from './widget-adapter/ui-client-policy.js';
 
 const executionTaskStoreByPrincipal = new Map<string, ExecutionTaskStore>();
 
@@ -49,7 +51,12 @@ export const createMcpServer = (
   userInfo?: UserInfo,
   authHeader?: string,
   apiKey?: string,
-  selectedTools?: ToolDefinition[]
+  selectedTools?: ToolDefinition[],
+  options: {
+    uiPolicy?: UiClientPolicy;
+    /** @deprecated Use uiPolicy. */
+    uiMetaEnabled?: boolean;
+  } = {}
 ): McpServer => {
   const serverConfig = AppConfig.getServerConfig();
   const taskConfig = AppConfig.getTaskConfig();
@@ -81,12 +88,23 @@ export const createMcpServer = (
   );
 
   installLoggingCapability(server);
+  const uiPolicy = options.uiPolicy ?? (
+    options.uiMetaEnabled !== undefined
+      ? resolveUiClientPolicy({
+          clientName: options.uiMetaEnabled ? 'openai-mcp' : undefined
+        })
+      : resolveUiClientPolicy()
+  );
 
   // Register all tools with user context, auth header and apiKey
-  registerAllTools(server, userInfo, authHeader, apiKey, selectedTools);
+  registerAllTools(server, userInfo, authHeader, apiKey, selectedTools, {
+    uiPolicy
+  });
 
   // Register all resources
-  registerAllResources(server);
+  registerAllResources(server, {
+    uiPolicy
+  });
 
   return server;
 };

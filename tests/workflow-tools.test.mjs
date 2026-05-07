@@ -11,15 +11,37 @@ const {
   executeTaskTool,
   createExecuteTaskTool
 } = await import('../dist/tools/workflow-tools.js');
-const { exportDataTool } = await import('../dist/tools/export-data-tool.js');
 const { InMemoryExecutionTaskStore } = await import('../dist/tasks/execution-task-store.js');
 const { RequestContextManager } = await import('../dist/utils/request-context.js');
 const { AppConfig } = await import('../dist/config/app-config.js');
 const {
-  AsyncExportFileStatus,
-  TaskExecuteStatus,
   StartTaskResult
 } = await import('../dist/api/types.js');
+
+const REMOVED_WORKFLOW_HINT_FIELDS = [
+  'rawApiResultOrder',
+  'templatesListStrategy',
+  'howToPickTemplate'
+];
+
+const REMOVED_SEARCH_TEMPLATE_RESPONSE_FIELDS = [
+  'selectedTemplateRef',
+  'generatedParameterSummary',
+  'generatedExecuteTaskSuggestion',
+  'nextStepHint'
+];
+
+function assertRemovedWorkflowHintFieldsAbsent(workflowHint) {
+  for (const field of REMOVED_WORKFLOW_HINT_FIELDS) {
+    assert.equal(field in workflowHint, false);
+  }
+}
+
+function assertRemovedSearchTemplateResponseFieldsAbsent(record) {
+  for (const field of REMOVED_SEARCH_TEMPLATE_RESPONSE_FIELDS) {
+    assert.equal(field in record, false);
+  }
+}
 
 async function withEnvOverride(overrides, callback) {
   const previousValues = new Map();
@@ -94,7 +116,7 @@ function createKeywordSearchApiStub() {
   };
 }
 
-test('search_templates returns recommendedTemplate and local-only guidance', async () => {
+test('search_templates returns recommendedTemplateName and local-only guidance', async () => {
   const api = {
     searchTemplates: async (input) => ({
       data:
@@ -122,11 +144,14 @@ test('search_templates returns recommendedTemplate and local-only guidance', asy
 
   const result = await searchTemplateTool.handler({ keyword: 'amazon' }, api);
 
-  assert.equal(result.recommendedTemplate.templateName, 'amazon-cloud');
-  assert.equal(result.recommendedTemplate.reason, 'best_cloud_relevance_match');
-  assert.equal(result.recommendedTemplate.rankInRawResults, 1);
+  assert.equal(result.recommendedTemplateName, 'amazon-cloud');
+  assert.equal('recommendedTemplate' in result, false);
+  assert.equal('listSemantics' in result, false);
   assert.equal(result.templates.length >= 1, true);
   assert.equal(result.templates[0].templateName, 'amazon-cloud');
+  assert.equal(result.templates[0].executionMode, 'Cloud');
+  assert.equal('runOnLabel' in result.templates[0], false);
+  assertRemovedWorkflowHintFieldsAbsent(result.workflowHint);
 });
 
 test('search_templates returns unified display fields without language switching', async () => {
@@ -151,16 +176,15 @@ test('search_templates returns unified display fields without language switching
 
     const result = await searchTemplateTool.handler({ keyword: 'amazon' }, api);
 
-    assert.equal(result.recommendedTemplate.displayName, 'Amazon Unified');
-    assert.equal(result.recommendedTemplate.shortDescription, 'Unified cloud template description');
-    assert.equal(result.recommendedTemplate.imageUrl, 'https://img.example.com/unified.png');
+    assert.equal(result.recommendedTemplateName, 'amazon-cloud');
     assert.equal(result.templates[0].displayName, 'Amazon Unified');
     assert.equal(result.templates[0].shortDescription, 'Unified cloud template description');
     assert.equal(result.templates[0].imageUrl, 'https://img.example.com/unified.png');
+    assert.equal('recommendedTemplate' in result, false);
   });
 });
 
-test('search_templates returns widget selection metadata for cloud and local templates', async () => {
+test('search_templates omits widget-only selection metadata from handler templates', async () => {
   const { api, searchCalls } = createKeywordSearchApiStub();
 
   const result = await searchTemplateTool.handler({ keyword: 'amazon', limit: 2 }, api);
@@ -173,30 +197,62 @@ test('search_templates returns widget selection metadata for cloud and local tem
     result.templates.map((template) => template.templateName),
     ['amazon-cloud', 'amazon-local']
   );
-  assert.equal(result.templates[0].selectionMode, 'execute_task');
-  assert.equal(result.templates[0].selectable, true);
-  assert.equal(result.templates[0].templateRef.templateId, 42);
-  assert.equal(result.templates[0].templateRef.templateName, 'amazon-cloud');
-  assert.equal(result.templates[1].selectionMode, 'local_only');
-  assert.equal(result.templates[1].selectable, false);
-  assert.equal(result.templates[1].templateRef.templateId, 84);
+  for (const template of result.templates) {
+    for (const field of [
+      'kindIds',
+      'kindLabels',
+      'supportsCloudScraping',
+      'selectable',
+      'selectionMode',
+      'templateRef'
+    ]) {
+      assert.equal(field in template, false);
+    }
+  }
 });
 
-test('search_templates presenter preserves widget selection metadata at the MCP boundary', async () => {
+test('search_templates presenter omits selection metadata from structuredContent and keeps templateRef only in cards', async () => {
   const { api } = createKeywordSearchApiStub();
   const handlerResult = await searchTemplateTool.handler({ keyword: 'amazon', limit: 2 }, api);
 
   const presented = searchTemplateTool.uiBinding.presenter(handlerResult);
 
-  assert.equal(presented.structuredContent.templates[0].selectionMode, 'execute_task');
-  assert.equal(presented.structuredContent.templates[0].selectable, true);
-  assert.equal(presented.structuredContent.templates[0].templateRef.templateId, 42);
-  assert.equal(presented.structuredContent.templates[1].selectionMode, 'local_only');
-  assert.equal(presented.structuredContent.templates[1].selectable, false);
+  assert.equal(presented.structuredContent.recommendedTemplateName, 'amazon-cloud');
+  assert.equal('recommendedTemplate' in presented.structuredContent, false);
+  assert.equal('listSemantics' in presented.structuredContent, false);
+  assertRemovedSearchTemplateResponseFieldsAbsent(presented.structuredContent);
+  assertRemovedSearchTemplateResponseFieldsAbsent(presented._meta);
+  for (const template of presented.structuredContent.templates) {
+    for (const field of [
+      'kindIds',
+      'kindLabels',
+      'supportsCloudScraping',
+      'selectable',
+      'selectionMode',
+      'templateRef',
+      'runOnLabel'
+    ]) {
+      assert.equal(field in template, false);
+    }
+    assert.equal(typeof template.executionMode, 'string');
+  }
   assert.equal(presented._meta.cards[1].templateRef.templateId, 84);
+  for (const card of presented._meta.cards) {
+    for (const field of [
+      'kindIds',
+      'kindLabels',
+      'supportsCloudScraping',
+      'selectable',
+      'selectionMode',
+      'runOnLabel'
+    ]) {
+      assert.equal(field in card, false);
+    }
+    assert.equal(typeof card.executionMode, 'string');
+  }
 });
 
-test('search_templates treats unknown runOn rows as non-selectable to match supportsCloudScraping', async () => {
+test('search_templates omits selection metadata for unknown runOn rows', async () => {
   const api = {
     searchTemplates: async (input) => {
       if (input.runOns === '2,3') {
@@ -224,9 +280,14 @@ test('search_templates treats unknown runOn rows as non-selectable to match supp
 
   const result = await searchTemplateTool.handler({ keyword: 'amazon', limit: 1 }, api);
 
-  assert.equal(result.templates[0].supportsCloudScraping, false);
-  assert.equal(result.templates[0].selectable, false);
-  assert.equal(result.templates[0].selectionMode, 'local_only');
+  for (const field of [
+    'supportsCloudScraping',
+    'selectable',
+    'selectionMode',
+    'templateRef'
+  ]) {
+    assert.equal(field in result.templates[0], false);
+  }
 });
 
 test('search_templates ignores HTTP_ACCEPT_LANGUAGE when unified fields exist', async () => {
@@ -251,12 +312,11 @@ test('search_templates ignores HTTP_ACCEPT_LANGUAGE when unified fields exist', 
 
     const result = await searchTemplateTool.handler({ keyword: 'xiaohongshu' }, api);
 
-    assert.equal(result.recommendedTemplate.displayName, 'Xiaohongshu Unified');
-    assert.equal(result.recommendedTemplate.shortDescription, 'Unified xhs description');
-    assert.equal(result.recommendedTemplate.imageUrl, 'https://img.example.com/unified-xhs.png');
+    assert.equal(result.recommendedTemplateName, 'xiaohongshu-cloud');
     assert.equal(result.templates[0].displayName, 'Xiaohongshu Unified');
     assert.equal(result.templates[0].shortDescription, 'Unified xhs description');
     assert.equal(result.templates[0].imageUrl, 'https://img.example.com/unified-xhs.png');
+    assert.equal('recommendedTemplate' in result, false);
   });
 });
 
@@ -298,6 +358,21 @@ test('search_templates supports exact template id lookup', async () => {
 });
 
 test('search_templates exact id presenter preserves selection metadata for cloud templates', async () => {
+  const paramsJson = JSON.stringify([
+    {
+      Id: 'ui-1',
+      ParamName: 'SearchKeyword',
+      DisplayText: 'Search Keyword',
+      ControlType: 'MultiInput',
+      IsRequired: true
+    }
+  ]);
+  const outputSchemaJson = JSON.stringify([
+    {
+      field: 'title',
+      type: 'string'
+    }
+  ]);
   const api = {
     getTemplateView: async (id) => ({
       id,
@@ -305,21 +380,44 @@ test('search_templates exact id presenter preserves selection metadata for cloud
       name: 'Google Search Scraper',
       prompts: 'Search Google and collect SERP rows.',
       runOn: 2,
-      parameters: '[]'
+      parameters: paramsJson
     }),
     getTemplateCurrentVersion: async () => ({
-      parameters: '[]'
+      parameters: paramsJson,
+      outputSchema: outputSchemaJson
     })
   };
 
   const handlerResult = await searchTemplateTool.handler({ id: 15 }, api);
   const presented = searchTemplateTool.uiBinding.presenter(handlerResult);
 
-  assert.equal(presented.structuredContent.templates[0].selectionMode, 'execute_task');
-  assert.equal(presented.structuredContent.templates[0].selectable, true);
-  assert.equal(presented.structuredContent.templates[0].templateRef.templateId, 15);
-  assert.equal(presented.structuredContent.templates[0].templateRef.templateName, 'google-search-scraper');
-  assert.equal(presented._meta.cards[0].selectionMode, 'execute_task');
+  assert.equal(presented.structuredContent.template.inputSchema[0].field, 'search_keyword');
+  assert.deepEqual(presented.structuredContent.template.outputSchema, [
+    {
+      field: 'title',
+      type: 'string'
+    }
+  ]);
+  assert.equal(presented.structuredContent.templates[0].inputSchema[0].field, 'search_keyword');
+  assert.deepEqual(presented.structuredContent.templates[0].outputSchema, [
+    {
+      field: 'title',
+      type: 'string'
+    }
+  ]);
+  for (const field of [
+    'kindIds',
+    'kindLabels',
+    'supportsCloudScraping',
+    'selectable',
+    'selectionMode',
+    'templateRef'
+  ]) {
+    assert.equal(field in presented.structuredContent.template, false);
+    assert.equal(field in presented.structuredContent.templates[0], false);
+  }
+  assert.equal(presented._meta.cards[0].templateRef.templateId, 15);
+  assert.equal('selectionMode' in presented._meta.cards[0], false);
 });
 
 test('search_templates falls back to keyword search when direct id lookup returns empty', async () => {
@@ -417,14 +515,22 @@ test('search_templates exact slug presenter preserves selection metadata for loc
   const handlerResult = await searchTemplateTool.handler({ slug: 'google-maps-desktop-scraper' }, api);
   const presented = searchTemplateTool.uiBinding.presenter(handlerResult);
 
-  assert.equal(presented.structuredContent.templates[0].selectionMode, 'local_only');
-  assert.equal(presented.structuredContent.templates[0].selectable, false);
-  assert.equal(presented.structuredContent.templates[0].templateRef.templateId, 27);
+  for (const field of [
+    'kindIds',
+    'kindLabels',
+    'supportsCloudScraping',
+    'selectable',
+    'selectionMode',
+    'templateRef'
+  ]) {
+    assert.equal(field in presented.structuredContent.templates[0], false);
+  }
+  assert.equal(presented._meta.cards[0].templateRef.templateId, 27);
   assert.equal(
-    presented.structuredContent.templates[0].templateRef.templateName,
+    presented._meta.cards[0].templateRef.templateName,
     'google-maps-desktop-scraper'
   );
-  assert.equal(presented._meta.cards[0].selectionMode, 'local_only');
+  assert.equal('selectionMode' in presented._meta.cards[0], false);
 });
 
 test('search_templates rejects mixed keyword and exact selectors', async () => {
@@ -543,179 +649,6 @@ test('execute_task returns missing_required_parameters before task creation', as
   assert.equal(result.inputSchema[0].field, 'search_keyword');
   assert.equal('parameterHints' in result, false);
   assert.equal(result.recoverable, true);
-});
-
-test('export_data returns exported preview rows from the authoritative export tool', async () => {
-  const api = {
-    getTaskStatusById: async () => ({
-      taskId: 'task-1',
-      status: TaskExecuteStatus.Finished,
-      lot: 'lot-1',
-      dataCount: 2
-    }),
-    createAsyncCloudStorageExport: async () => {},
-    getLastExportPreview: async () => ({
-      latestExportFileStatus: AsyncExportFileStatus.Generated,
-      latestExportFileUrl: 'https://download.example.com/export.json',
-      collectedDataTotal: 2,
-      collectedDataSample: [
-        { title: 'Row 1', price: '$10' },
-        { title: 'Row 2', price: '$20' }
-      ]
-    })
-  };
-
-  const result = await exportDataTool.handler(
-    {
-      taskId: 'task-1'
-    },
-    api
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(result.status, 'exported');
-  assert.equal(result.lot, 'lot-1');
-  assert.equal(result.dataTotal, 2);
-  assert.equal(result.exportFileUrl, 'https://download.example.com/export.json');
-  assert.equal(result.sampleData.length, 2);
-  assert.equal(result.sampleRowCount, 2);
-  assert.match(result.toolHint, /Present sampleData as a table/i);
-});
-
-test('export_data truncates long preview values for token efficiency', async () => {
-  const api = {
-    getTaskStatusById: async () => ({
-      taskId: 'task-compact',
-      status: TaskExecuteStatus.Finished,
-      lot: 'lot-compact',
-      dataCount: 1
-    }),
-    createAsyncCloudStorageExport: async () => {},
-    getLastExportPreview: async () => ({
-      latestExportFileStatus: AsyncExportFileStatus.Generated,
-      latestExportFileUrl: 'https://download.example.com/export.json',
-      collectedDataTotal: 1,
-      collectedDataSample: [
-        {
-          a: 'x'.repeat(220),
-          b: 'value-b',
-          nested: {
-            text: 'y'.repeat(220)
-          }
-        }
-      ]
-    })
-  };
-
-  const result = await exportDataTool.handler(
-    {
-      taskId: 'task-compact'
-    },
-    api
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(result.status, 'exported');
-  assert.equal(result.sampleData[0].a, `${'x'.repeat(128)}...`);
-  assert.equal(result.sampleData[0].nested.text, `${'y'.repeat(128)}...`);
-});
-
-test('export_data returns collecting state while the task is still running', async () => {
-  const api = {
-    getTaskStatusById: async () => ({
-      taskId: 'task-preview',
-      status: TaskExecuteStatus.Executing,
-      lot: 'lot-preview',
-      dataCount: 2
-    })
-  };
-
-  const result = await exportDataTool.handler(
-    {
-      taskId: 'task-preview'
-    },
-    api
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(result.status, 'collecting');
-  assert.equal(result.taskStatus, TaskExecuteStatus.Executing);
-  assert.equal(result.taskStatusLabel, 'Executing');
-  assert.equal(result.dataTotal, 2);
-  assert.equal(result.retryGuidance.tool, 'export_data');
-  assert.equal(result.retryGuidance.waitSecondsMin, 10);
-  assert.equal(result.retryGuidance.waitSecondsMax, 30);
-  assert.match(result.retryGuidance.instruction, /10-30 seconds/i);
-  assert.match(result.toolHint, /tasks\/get/i);
-  assert.match(result.message, /prefer tasks\/get/i);
-  assert.match(result.suggestion, /10-30 seconds/i);
-});
-
-test('export_data returns no_data when export completes without collected rows', async () => {
-  const api = {
-    getTaskStatusById: async () => ({
-      taskId: 'task-exported',
-      status: TaskExecuteStatus.Finished,
-      lot: 'lot-exported',
-      dataCount: 0
-    }),
-    createAsyncCloudStorageExport: async () => {},
-    getLastExportPreview: async () => ({
-      latestExportFileStatus: AsyncExportFileStatus.Generated,
-      latestExportFileUrl: 'https://download.example.com/task-exported.json',
-      collectedDataTotal: 0,
-      collectedDataSample: []
-    })
-  };
-
-  const result = await exportDataTool.handler(
-    {
-      taskId: 'task-exported'
-    },
-    api
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(result.status, 'no_data');
-  assert.equal(result.lot, 'lot-exported');
-  assert.equal(result.exportFileUrl, 'https://download.example.com/task-exported.json');
-  assert.match(result.message, /no data was collected/i);
-});
-
-test('export_data returns exporting retry guidance while export file is still being generated', async () => {
-  const api = {
-    getTaskStatusById: async () => ({
-      taskId: 'task-exporting',
-      status: TaskExecuteStatus.Finished,
-      lot: 'lot-exporting',
-      dataCount: 12
-    }),
-    createAsyncCloudStorageExport: async () => {},
-    getLastExportPreview: async () => ({
-      latestExportFileStatus: AsyncExportFileStatus.WaitingGenerate,
-      latestExportFileUrl: 'https://download.example.com/task-exporting.csv',
-      exportProgressPercent: 65,
-      collectedDataTotal: 12,
-      collectedDataSample: []
-    })
-  };
-
-  const result = await exportDataTool.handler(
-    {
-      taskId: 'task-exporting',
-      exportFileType: 'CSV'
-    },
-    api
-  );
-
-  assert.equal(result.success, true);
-  assert.equal(result.status, 'exporting');
-  assert.equal(result.retryGuidance.tool, 'export_data');
-  assert.equal(result.retryGuidance.waitSecondsMin, 10);
-  assert.equal(result.retryGuidance.waitSecondsMax, 30);
-  assert.match(result.retryGuidance.instruction, /10-30 seconds/i);
-  assert.match(result.message, /still being generated/i);
-  assert.match(result.suggestion, /10-30 seconds/i);
 });
 
 test('execute_task non-task mode returns accepted export_data follow-up guidance without polling', async () => {

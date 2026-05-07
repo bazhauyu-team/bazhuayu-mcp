@@ -9,12 +9,6 @@ export const SEARCH_WORKFLOW_HINT = {
   pipeline: ['search_templates', 'execute_task', '(tasks/get|tasks/result) or export_data', 'export_data'] as const,
   routeToSearchWhen:
     'If the user asks to scrape, crawl, extract, collect, or get website data, start with search_templates.',
-  /** Raw bazhuayu search API returns rows in **relevance** order */
-  rawApiResultOrder: 'relevance' as const,
-  /** `templates` prefers cloud-capable rows, then supplements with local-only rows if needed */
-  templatesListStrategy: 'cloud_first_then_local_fallback' as const,
-  howToPickTemplate:
-    'Prefer recommendedTemplate first. In templates[], cloud-capable rows come first; local-only fallback rows include desktop download guidance.',
   templateChainingRule:
     'If a template row includes outputSchema, treat it as the structured fields this template can collect. Those collected fields can be used as candidate inputs for a later template, so outputSchema is useful for chaining templates into multi-step scraping workflows.',
   executeTaskParameters:
@@ -39,15 +33,6 @@ export function formatWorkflowResourceMarkdown(): string {
     `- ${SEARCH_WORKFLOW_HINT.routeToSearchWhen}`,
     '- Do not call `execute_task` directly unless you already have a valid `templateName` and business parameters.',
     '- Do not call `export_data` first unless user already provides an existing bazhuayu `taskId` or the execution task is already complete.',
-    '',
-    '## Two different orderings (search_templates)',
-    '',
-    `- **recommendedTemplate** — the best cloud-capable row chosen from the API relevance list, with \`rankInRawResults\` for transparency.`,
-    `- **templates** — search first pulls **cloud-capable** templates (\`runOn=2,3\`) and returns up to \`limit\` rows (default ${DEFAULT_TEMPLATE_SEARCH_LIMIT}); if that is not enough, it appends **local-only** templates (\`runOn=1\`).`,
-    '',
-    '## How to pick a template',
-    '',
-    SEARCH_WORKFLOW_HINT.howToPickTemplate,
     '',
     '## Template chaining',
     '',

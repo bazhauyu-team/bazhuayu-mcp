@@ -138,7 +138,7 @@ export class SelfCorrectionErrorBuilder {
           keyword: websiteHint
         },
         filterCriteria: {
-          runOn: [2, 3]
+          executionMode: 'Cloud'
         }
       },
       content: [

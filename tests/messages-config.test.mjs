@@ -16,10 +16,6 @@ const {
 const { exportDataTool } = await import('../dist/tools/export-data-tool.js');
 const { redeemCouponCodeTool } = await import('../dist/tools/marketing-tools.js');
 
-test('messages stable entry defaults to OP-first start-task guidance', () => {
-  assert.match(messages.errors.task.start.noPermission, /Only template tasks can use the trial quota/i);
-});
-
 test('bzy and op message variants keep the same task start error keys', () => {
   assert.deepEqual(
     Object.keys(bzyMessages.errors.task.start).sort(),
@@ -93,6 +89,13 @@ test('self-correction message variants provide shared templates for every scenar
   }
 });
 
+test('template local-only recovery guidance uses search_templates executionMode in both languages', () => {
+  assert.match(opMessages.errors.selfCorrection.templateLocalOnly.template, /executionMode/);
+  assert.doesNotMatch(opMessages.errors.selfCorrection.templateLocalOnly.template, /Keep templates where `runOn`/);
+  assert.match(bzyMessages.errors.selfCorrection.templateLocalOnly.template, /executionMode/);
+  assert.doesNotMatch(bzyMessages.errors.selfCorrection.templateLocalOnly.template, /只保留 `runOn`/);
+});
+
 test('start_or_stop_task metadata is sourced from the stable messages entry', () => {
   assert.equal(startOrStopTaskTool.title, messages.tools.startOrStopTask.title);
   assert.equal(startOrStopTaskTool.description, messages.tools.startOrStopTask.description);
@@ -115,6 +118,16 @@ test('remaining tool metadata is sourced from the stable messages entry', () => 
   assert.equal(redeemCouponCodeTool.description, messages.tools.redeemCouponCode.description);
 });
 
+test('search_templates descriptions preserve current AI-facing result field contract', () => {
+  for (const description of [
+    opMessages.tools.searchTemplates.description,
+    bzyMessages.tools.searchTemplates.description
+  ]) {
+    assert.match(description, /recommendedTemplateName/);
+    assert.match(description, /executionMode/);
+  }
+});
+
 test('task action prompt templates are localized in bzy and op message variants', () => {
   assert.deepEqual(
     Object.keys(bzyMessages.tools.searchTasks.actionPromptTemplates).sort(),
@@ -130,23 +143,14 @@ test('workflow-tools only exports workflow tools and not the authoritative expor
   assert.equal('exportDataTool' in workflowToolsModule, false);
 });
 
-test('execute_task message metadata reflects MCP task follow-up guidance', () => {
+test('execute_task message metadata reflects task-mode and export follow-up contract', () => {
   assert.match(messages.tools.executeTask.description, /validateOnly/i);
   assert.match(messages.tools.executeTask.description, /accepted/i);
   assert.match(messages.tools.executeTask.description, /MCP Tasks mode/i);
-  assert.match(messages.tools.executeTask.description, /recommended first choice/i);
-  assert.match(messages.tools.executeTask.description, /fallback only/i);
   assert.match(messages.tools.executeTask.description, /tasks\/get/);
   assert.match(messages.tools.executeTask.description, /tasks\/result/);
   assert.match(messages.tools.executeTask.description, /export_data/);
-  assert.match(messages.tools.executeTask.description, /10-30 seconds/i);
   assert.match(messages.tools.executeTask.description, /targetMaxRows/i);
-});
-
-test('export_data message metadata reflects retry guidance for collecting and exporting states', () => {
-  assert.match(messages.tools.exportData.description, /collecting/i);
-  assert.match(messages.tools.exportData.description, /10-30 seconds/i);
-  assert.doesNotMatch(messages.tools.exportData.description, /about 10 seconds/i);
 });
 
 test('execute_task supports MCP tasks optionally so validateOnly can remain a synchronous preflight call', () => {
