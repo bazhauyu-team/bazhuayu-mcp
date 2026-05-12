@@ -862,6 +862,30 @@ test('execute_task accepts parameters as a JSON string for clients that cannot s
   assert.equal(result.retryGuidance.waitSecondsMax, 30);
 });
 
+test('execute_task rejects malformed JSON string parameters before handler execution', () => {
+  assert.throws(
+    () =>
+      executeTaskTool.inputSchema.parse({
+        templateName: 'amazon-product-details-scraper',
+        parameters: '{"MainKeys":["059035342X"]'
+      }),
+    /parameters must be a valid JSON object string/
+  );
+});
+
+test('execute_task rejects JSON string parameters that are not objects', () => {
+  for (const parameters of ['[]', 'null', '"keyword"', '42', 'true']) {
+    assert.throws(
+      () =>
+        executeTaskTool.inputSchema.parse({
+          templateName: 'amazon-product-details-scraper',
+          parameters
+        }),
+      /parameters must deserialize to a JSON object/
+    );
+  }
+});
+
 test('execute_task task-mode validateOnly returns an immediate completed task instead of throwing', async () => {
   const paramsJson = JSON.stringify([
     {

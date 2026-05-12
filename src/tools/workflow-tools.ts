@@ -130,6 +130,22 @@ function normalizeExecuteTaskParameters(raw: unknown): Record<string, unknown> {
   throw new Error('parameters must be an object or a JSON object string.');
 }
 
+function prepareExecuteTaskParametersForStringSchema(raw: unknown): unknown {
+  if (raw == null) {
+    return '';
+  }
+
+  if (typeof raw === 'string') {
+    return raw;
+  }
+
+  if (typeof raw === 'object' && !Array.isArray(raw)) {
+    return JSON.stringify(raw);
+  }
+
+  throw new Error('parameters must be a JSON object string.');
+}
+
 function inferImmediateTaskTerminalStatus(
   response: WorkflowToolError | Record<string, unknown>
 ): 'completed' | 'failed' {
@@ -626,13 +642,13 @@ const executeTaskInputSchema = z.preprocess(
       ),
     parameters: z
       .preprocess(
-        (value) => normalizeExecuteTaskParameters(value),
-        z.record(z.string(), z.any())
+        (value) => prepareExecuteTaskParametersForStringSchema(value),
+        z.string().transform((value) => normalizeExecuteTaskParameters(value))
       )
       .optional()
       .default({})
       .describe(
-        'Business parameters use `inputSchema[].field` as keys. Accepts either an object or a JSON object string for MCP clients that cannot send object-typed arguments. For source-backed fields, pass the selected source option `key` as the field value. MultiInput = array of strings. Example: { "search_keyword": ["phone"], "site": "United States" }'
+        'Business parameters as a JSON object string. Use `inputSchema[].field` as keys. For source-backed fields, pass the selected source option `key` as the field value. MultiInput = array of strings. Example: "{\\"search_keyword\\":[\\"phone\\"],\\"site\\":\\"United States\\"}"'
       ),
     targetMaxRows: z
       .number()

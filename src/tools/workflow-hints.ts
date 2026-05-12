@@ -12,7 +12,7 @@ export const SEARCH_WORKFLOW_HINT = {
   templateChainingRule:
     'If a template row includes outputSchema, treat it as the structured fields this template can collect. Those collected fields can be used as candidate inputs for a later template, so outputSchema is useful for chaining templates into multi-step scraping workflows.',
   executeTaskParameters:
-    'Pass parameters using inputSchema[].field as the key contract. `parameters` accepts either an object or a JSON object string for MCP clients that cannot send object-typed arguments. For source-backed fields, pass the selected source option key as the field value. MultiInput fields must be string[] even for a single value. Use validateOnly=true before creating a task; validateOnly may return status=awaiting_source_selection until dependent source-backed fields are chosen. For non-validateOnly runs, MCP Tasks mode is the recommended first choice whenever the client supports task augmentation; direct calls are compatibility fallback only for clients with limited MCP task support. For MCP task clients, follow runtime state through tasks/get or tasks/result. For clients without MCP Tasks, execute_task returns accepted with an bazhuayu taskId right after create/start succeeds; then wait about 10-30 seconds before calling export_data(taskId) to begin polling collection/export progress. A positive targetMaxRows requires MCP task mode. targetMaxRows=0 means no threshold stop.',
+    'Pass parameters as a JSON object string using inputSchema[].field as the key contract, for example `"{\\"search_keyword\\":[\\"phone\\"],\\"site\\":\\"United States\\"}"`. The server validates that it parses to a JSON object before execution. For source-backed fields, pass the selected source option key as the field value. MultiInput fields must be string[] even for a single value. Use validateOnly=true before creating a task; validateOnly may return status=awaiting_source_selection until dependent source-backed fields are chosen. For non-validateOnly runs, MCP Tasks mode is the recommended first choice whenever the client supports task augmentation; direct calls are compatibility fallback only for clients with limited MCP task support. For MCP task clients, follow runtime state through tasks/get or tasks/result. For clients without MCP Tasks, execute_task returns accepted with an bazhuayu taskId right after create/start succeeds; then wait about 10-30 seconds before calling export_data(taskId) to begin polling collection/export progress. A positive targetMaxRows requires MCP task mode. targetMaxRows=0 means no threshold stop.',
   sourceOptionsRule:
     'Keyword search returns source summaries only. Use exact lookup to inspect root-level sourceOptions. If a field depends on another field, use execute_task(validateOnly=true) with the selected parent value to resolve dependent sourceOptions.',
   exportDataPreviewRule:
@@ -89,7 +89,7 @@ export function sanitizeTemplateTaskCreationError(message: string): string {
   const short = stripped.length > 500 ? `${stripped.slice(0, 500)}…` : stripped;
   return (
     `${short}\n\n` +
-    `MCP: Only use execute_task with a flat "parameters" object. ` +
+    `MCP: Use execute_task with "parameters" as a JSON object string. ` +
     `The server builds UI/Template parameter arrays. Match parameter keys to inputSchema.field; MultiInput = string array; use exact-lookup root sourceOptions and validateOnly dependent sourceOptions before running.`
   );
 }

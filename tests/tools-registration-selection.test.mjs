@@ -8,6 +8,23 @@ process.env.OFFICIAL_SITE_URL = process.env.OFFICIAL_SITE_URL || 'https://bazhua
 const { registerAllTools } = await import('../dist/tools.js');
 const { allTools } = await import('../dist/tools/tool-definitions.js');
 
+function baseZodTypeName(schema) {
+  let current = schema;
+  while (current?._def) {
+    const typeName = current._def.typeName;
+    if (typeName === 'ZodDefault' || typeName === 'ZodOptional' || typeName === 'ZodNullable') {
+      current = current._def.innerType;
+      continue;
+    }
+    if (typeName === 'ZodEffects') {
+      current = current._def.schema;
+      continue;
+    }
+    return typeName;
+  }
+  return undefined;
+}
+
 test('registerAllTools registers only the provided tool subset', () => {
   const registered = [];
   const fakeServer = {
@@ -120,4 +137,26 @@ test('registerAllTools omits OpenAI registration _meta when UI meta is disabled'
 
   assert.equal(registered[0].name, 'search_templates');
   assert.equal('_meta' in registered[0].meta, false);
+});
+
+test('execute_task registers parameters as a string schema for object-limited clients', () => {
+  const registered = [];
+  const fakeServer = {
+    experimental: {
+      tasks: {
+        registerToolTask(name, meta, handler) {
+          registered.push({ name, meta, handler });
+        }
+      }
+    },
+    registerTool(name, meta, handler) {
+      registered.push({ name, meta, handler });
+    }
+  };
+  const selected = allTools.filter((tool) => tool.name === 'execute_task');
+
+  registerAllTools(fakeServer, undefined, undefined, undefined, selected);
+
+  assert.equal(registered[0].name, 'execute_task');
+  assert.equal(baseZodTypeName(registered[0].meta.inputSchema.parameters), 'ZodString');
 });
